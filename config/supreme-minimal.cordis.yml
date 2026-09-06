@@ -1,0 +1,7 @@
+# DSH SUPREME — MINIMAL REAL LOADER GATE (Spec §7 / Task 2).
+# Profile manifest carries NO bundles: bare Loader + include + this probe.
+- insert:
+    - id: supreme-minimal-probe
+      name: "__SUPREME_DIST__/supreme-minimal-probe/index.mjs"
+      config:
+        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/minimal-probe.markers.jsonl"

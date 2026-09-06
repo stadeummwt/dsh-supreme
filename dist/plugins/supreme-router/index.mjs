@@ -1,0 +1,368 @@
+// dsh-supreme/src/plugins/supreme-router/index.ts
+import { z } from "zod";
+
+// dsh-supreme/src/plugins/supreme-router/engine.ts
+var SCORE_COMPONENTS = [
+  "quality",
+  "health",
+  "quota",
+  "reliability",
+  "latency",
+  "capabilityFit",
+  "diversity"
+];
+var DEFAULT_WEIGHTS = Object.freeze({
+  quality: 0.3,
+  health: 0.2,
+  quota: 0.15,
+  reliability: 0.1,
+  latency: 0.1,
+  capabilityFit: 0.1,
+  diversity: 0.05
+});
+var DEFAULT_CIRCUIT = Object.freeze({
+  failureThreshold: 3,
+  windowMs: 300000,
+  cooldownMs: 60000
+});
+
+class CircuitBreaker {
+  config;
+  failures = new Map;
+  openedUntil = new Map;
+  successes = new Map;
+  constructor(config) {
+    this.config = config;
+  }
+  recordFailure(key, now) {
+    const list = (this.failures.get(key) ?? []).filter((t) => now - t <= this.config.windowMs);
+    list.push(now);
+    this.failures.set(key, list);
+    if (list.length >= this.config.failureThreshold) {
+      this.openedUntil.set(key, now + this.config.cooldownMs);
+    }
+    return this.stateOf(key, now);
+  }
+  recordSuccess(key, now) {
+    const list = (this.successes.get(key) ?? []).filter((t) => now - t <= this.config.windowMs);
+    list.push(now);
+    this.successes.set(key, list);
+    this.failures.set(key, []);
+    this.openedUntil.delete(key);
+    return this.stateOf(key, now);
+  }
+  stateOf(key, now) {
+    const openUntil = this.openedUntil.get(key);
+    if (openUntil !== undefined && now < openUntil) {
+      return {
+        key,
+        state: "CIRCUIT_OPEN",
+        recentFailures: this.failures.get(key)?.length ?? 0,
+        openedUntil: openUntil
+      };
+    }
+    const recent = this.failures.get(key)?.length ?? 0;
+    let state = "HEALTHY";
+    if (recent > 0)
+      state = recent >= this.config.failureThreshold ? "DEGRADED" : "DEGRADED";
+    return { key, state, recentFailures: recent, openedUntil: null };
+  }
+  reliability(key, now) {
+    const s = (this.successes.get(key) ?? []).filter((t) => now - t <= this.config.windowMs).length;
+    const f = (this.failures.get(key) ?? []).filter((t) => now - t <= this.config.windowMs).length;
+    if (s + f === 0)
+      return 0.5;
+    return s / (s + f);
+  }
+}
+function normalizeWeights(raw) {
+  const sum = SCORE_COMPONENTS.reduce((acc, k) => acc + (Number.isFinite(raw[k]) ? Math.max(0, raw[k]) : 0), 0);
+  if (sum <= 0)
+    return { ...DEFAULT_WEIGHTS };
+  const out = {};
+  for (const k of SCORE_COMPONENTS)
+    out[k] = Math.max(0, Number.isFinite(raw[k]) ? raw[k] : 0) / sum;
+  return out;
+}
+var DEFAULT_ROUTER_CONFIG = Object.freeze({
+  weights: { ...DEFAULT_WEIGHTS },
+  minBenchmarkSamples: 5,
+  latencyCeilingMs: 30000,
+  minQuotaHeadroom: 0.05,
+  circuit: { ...DEFAULT_CIRCUIT }
+});
+var HEALTH_SCORE = {
+  HEALTHY: 1,
+  DEGRADED: 0.5
+};
+function selectRoute(deps) {
+  const { config, candidates, circuit, perf, now, decisionId, input } = deps;
+  const hardGates = [];
+  const required = input.requiredCapabilities ?? [];
+  const requiredTokens = input.requiredContextTokens ?? 0;
+  const eligible = [];
+  for (const candidate of candidates) {
+    const push = (gate, passed, reason) => hardGates.push({ gate, candidate: candidate.key, passed, reason });
+    const costAllowed = candidate.costClass === "FREE_CONFIRMED" || candidate.costClass === "FREE_LIMITED";
+    push("policy_cost", costAllowed, costAllowed ? undefined : `COST_${candidate.costClass}_DENIED`);
+    push("provider_available", candidate.providerAvailable, candidate.providerAvailable ? undefined : "PROVIDER_NOT_IN_CATALOG");
+    push("credential_available", candidate.credentialConfigured, candidate.credentialConfigured ? undefined : "CREDENTIAL_UNVERIFIED");
+    push("model_valid", candidate.modelValid, candidate.modelValid ? undefined : "INVALID_MODEL");
+    const missing = required.filter((cap) => !candidate.capabilities.includes(cap));
+    push("capability_fit", missing.length === 0, missing.length === 0 ? undefined : `MISSING:${missing.join("+")}`);
+    const contextOk = candidate.contextWindow === 0 || candidate.contextWindow >= requiredTokens;
+    push("context_sufficient", contextOk, contextOk ? undefined : `CONTEXT_${candidate.contextWindow}_${requiredTokens}`);
+    const circuitState = circuit.stateOf(candidate.key, now);
+    const healthOk = circuitState.state !== "CIRCUIT_OPEN";
+    push("health_ok", healthOk, healthOk ? circuitState.state : "CIRCUIT_OPEN");
+    const quotaOk = candidate.quotaHeadroom >= config.minQuotaHeadroom;
+    push("quota_ok", quotaOk, quotaOk ? undefined : `QUOTA_${candidate.quotaHeadroom.toFixed(2)}`);
+    if (costAllowed && candidate.providerAvailable && candidate.credentialConfigured && candidate.modelValid && missing.length === 0 && contextOk && healthOk && quotaOk) {
+      eligible.push(candidate);
+    }
+  }
+  const weights = normalizeWeights(config.weights);
+  const reasonCodes = [];
+  let degraded = false;
+  if (eligible.length === 0) {
+    reasonCodes.push("BLOCKED_NO_ELIGIBLE_ROUTE");
+    const blockedReasons = new Set(hardGates.filter((g) => !g.passed).map((g) => `${g.candidate}:${g.gate}`));
+    for (const r of blockedReasons)
+      reasonCodes.push(`GATE_FAILED:${r}`);
+    return {
+      decisionId,
+      blocked: "BLOCKED_NO_ELIGIBLE_ROUTE",
+      hardGates,
+      reasonCodes,
+      degraded: false,
+      alternatives: [],
+      weightsUsed: weights
+    };
+  }
+  const domainCount = new Map;
+  for (const c of eligible)
+    domainCount.set(c.failureDomain, (domainCount.get(c.failureDomain) ?? 0) + 1);
+  const scored = eligible.map((candidate) => {
+    const perfEntry = perf.get(candidate.key);
+    const hasHistory = (perfEntry?.samples ?? 0) >= config.minBenchmarkSamples;
+    const quality = hasHistory ? perfEntry?.avgQuality ?? 0.5 : 0.5;
+    if (!hasHistory)
+      degraded = true;
+    const circuitState = circuit.stateOf(candidate.key, now);
+    const health = HEALTH_SCORE[circuitState.state] ?? 0;
+    if (circuitState.state === "DEGRADED")
+      degraded = true;
+    const quota = clamp01(candidate.quotaHeadroom);
+    const reliability = circuit.reliability(candidate.key, now);
+    const latency = 0.5;
+    const capabilityFit = required.length === 0 ? 1 : required.filter((cap) => candidate.capabilities.includes(cap)).length / required.length;
+    const share = (domainCount.get(candidate.failureDomain) ?? 1) / eligible.length;
+    const diversity = clamp01(1 - share);
+    const components = {
+      quality,
+      health,
+      quota,
+      reliability,
+      latency,
+      capabilityFit,
+      diversity
+    };
+    const score = SCORE_COMPONENTS.reduce((acc, k) => acc + weights[k] * components[k], 0);
+    return { candidate, score, components };
+  });
+  scored.sort((a, b) => b.score - a.score || a.candidate.key.localeCompare(b.candidate.key));
+  const best = scored[0];
+  if (!hasExplorationEvidence(perf, config, eligible))
+    reasonCodes.push("EXPLORATION_NO_HISTORY");
+  reasonCodes.push("OK");
+  return {
+    decisionId,
+    blocked: null,
+    provider: best.candidate.provider,
+    model: best.candidate.model,
+    score: round4(best.score),
+    hardGates,
+    reasonCodes,
+    degraded,
+    alternatives: scored.slice(1, 4).map((s) => ({
+      provider: s.candidate.provider,
+      model: s.candidate.model,
+      score: round4(s.score)
+    })),
+    weightsUsed: weights
+  };
+}
+function hasExplorationEvidence(perf, config, eligible) {
+  return eligible.every((c) => (perf.get(c.key)?.samples ?? 0) >= config.minBenchmarkSamples);
+}
+function clamp01(v) {
+  if (!Number.isFinite(v))
+    return 0.5;
+  return Math.min(1, Math.max(0, v));
+}
+function round4(v) {
+  return Math.round(v * 1e4) / 1e4;
+}
+
+// dsh-supreme/src/plugins/supreme-router/index.ts
+var name = "supreme-router";
+var inject = ["llm", "supremePolicy", "supremeObservability", "supremeBenchmark"];
+var candidateModelSchema = z.object({
+  model: z.string().min(1),
+  costClass: z.enum(["FREE_CONFIRMED", "FREE_LIMITED", "TRIAL", "PAID", "UNKNOWN"]).default("UNKNOWN"),
+  capabilities: z.array(z.string()).default([]),
+  contextWindow: z.number().int().min(0).default(0),
+  failureDomain: z.string().default("default")
+});
+var candidateProviderSchema = z.object({
+  provider: z.string().min(1),
+  credentialMode: z.enum(["config-owned", "service"]).default("service"),
+  credentialConfigured: z.boolean().default(false),
+  credentialRef: z.string().optional(),
+  quotaHeadroom: z.number().min(0).max(1).default(0.5),
+  models: z.array(candidateModelSchema).min(1)
+});
+var Config = z.object({
+  candidates: z.array(candidateProviderSchema).default([]),
+  weights: z.object({
+    quality: z.number().min(0).default(0.3),
+    health: z.number().min(0).default(0.2),
+    quota: z.number().min(0).default(0.15),
+    reliability: z.number().min(0).default(0.1),
+    latency: z.number().min(0).default(0.1),
+    capabilityFit: z.number().min(0).default(0.1),
+    diversity: z.number().min(0).default(0.05)
+  }).default({ quality: 0.3, health: 0.2, quota: 0.15, reliability: 0.1, latency: 0.1, capabilityFit: 0.1, diversity: 0.05 }),
+  minBenchmarkSamples: z.number().int().min(1).default(5),
+  latencyCeilingMs: z.number().int().min(100).default(30000),
+  minQuotaHeadroom: z.number().min(0).max(1).default(0.05),
+  circuit: z.object({
+    failureThreshold: z.number().int().min(1).default(3),
+    windowMs: z.number().int().min(1000).default(300000),
+    cooldownMs: z.number().int().min(0).default(60000)
+  }).default({ failureThreshold: 3, windowMs: 300000, cooldownMs: 60000 })
+});
+function apply(ctx, config) {
+  const deps = {
+    llm: ctx.llm,
+    supremePolicy: ctx.supremePolicy,
+    supremeObservability: ctx.supremeObservability,
+    supremeBenchmark: ctx.supremeBenchmark
+  };
+  const routerConfig = {
+    weights: config.weights,
+    minBenchmarkSamples: config.minBenchmarkSamples,
+    latencyCeilingMs: config.latencyCeilingMs,
+    minQuotaHeadroom: config.minQuotaHeadroom,
+    circuit: config.circuit
+  };
+  const circuit = new CircuitBreaker(routerConfig.circuit);
+  const candidatesConfig = config.candidates;
+  const context = ctx;
+  async function credentialConfiguredFor(entry) {
+    if (entry.credentialMode === "config-owned")
+      return entry.credentialConfigured;
+    const credentials = context.get("credentials");
+    if (!credentials || !entry.credentialRef)
+      return false;
+    try {
+      const info = await credentials.describe(entry.credentialRef);
+      return info.configured === true;
+    } catch {
+      return false;
+    }
+  }
+  const service = {
+    async route(input) {
+      const now = Date.now();
+      const decisionId = genId("route");
+      let liveProviders = [];
+      try {
+        liveProviders = deps.llm.listProviders().map((p) => typeof p === "string" ? p : p.id ?? p.provider ?? "").filter((id) => id.length > 0);
+      } catch {
+        liveProviders = [];
+      }
+      const perf = new Map;
+      try {
+        for (const agg of deps.supremeBenchmark.aggregateModelPerformance()) {
+          perf.set(`${agg.provider}::${agg.model}`, { avgQuality: agg.avgQuality, samples: agg.samples });
+        }
+      } catch {}
+      const candidates = [];
+      for (const entry of candidatesConfig) {
+        const credentialConfigured = await credentialConfiguredFor(entry);
+        for (const model of entry.models) {
+          let modelValid = false;
+          let contextWindow = model.contextWindow;
+          try {
+            const resolved = await deps.llm.resolveModelInfo(entry.provider, model.model);
+            modelValid = Boolean(resolved);
+            if (resolved?.context?.contextWindow)
+              contextWindow = resolved.context.contextWindow;
+          } catch {
+            modelValid = false;
+          }
+          candidates.push({
+            key: `${entry.provider}::${model.model}`,
+            provider: entry.provider,
+            model: model.model,
+            costClass: model.costClass,
+            capabilities: model.capabilities,
+            contextWindow,
+            credentialConfigured,
+            quotaHeadroom: entry.quotaHeadroom,
+            failureDomain: model.failureDomain,
+            providerAvailable: liveProviders.includes(entry.provider),
+            modelValid
+          });
+        }
+      }
+      const decision = selectRoute({
+        config: routerConfig,
+        candidates,
+        circuit,
+        perf,
+        now,
+        decisionId,
+        input
+      });
+      deps.supremeObservability.record("route_decision", {
+        routeDecisionId: decision.decisionId,
+        provider: decision.provider,
+        model: decision.model,
+        detail: decision.blocked ? `blocked:${decision.reasonCodes.filter((r) => r.startsWith("GATE_FAILED")).length}gates` : `score:${decision.score ?? 0}`
+      });
+      return decision;
+    },
+    recordOutcome({ provider, model, success }) {
+      const key = `${provider}::${model}`;
+      const now = Date.now();
+      if (success)
+        circuit.recordSuccess(key, now);
+      else
+        circuit.recordFailure(key, now);
+    },
+    healthSnapshot() {
+      const now = Date.now();
+      const keys = new Set;
+      for (const entry of candidatesConfig)
+        for (const m of entry.models)
+          keys.add(`${entry.provider}::${m.model}`);
+      return [...keys].map((key) => circuit.stateOf(key, now));
+    },
+    config: () => routerConfig
+  };
+  ctx.provide("supremeRouter", Object.freeze(service));
+  ctx.logger.info("supreme-router active with %d configured candidates", candidatesConfig.length);
+}
+function genId(prefix) {
+  const g = globalThis;
+  const rand = g.crypto?.randomUUID?.().slice(0, 8) ?? Math.random().toString(36).slice(2, 10);
+  return `${prefix}_${Date.now().toString(36)}_${rand}`;
+}
+export {
+  name,
+  inject,
+  apply,
+  Config
+};

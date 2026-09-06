@@ -4,111 +4,127 @@ This file is the authoritative record of what this build is actually based on.
 It exists to satisfy the anti-hallucination rule (Spec §2) and the upstream
 integrity gate (Spec §3).
 
-## 1. Upstream integrity gate result
+## 1. Upstream integrity gate result — RESOLVED
 
 ```text
-DSH repository path          = NOT PRESENT in this environment
-DSH current commit           = UNAVAILABLE
-DSH branch                   = UNAVAILABLE
-DSH working tree status      = N/A (no checkout exists)
-Node version                 = per sandbox runtime (Bun runtime, bun-types 1.3.4)
-pnpm version                 = N/A (bun used)
-DSH_UPSTREAM_COMMIT          = UNAVAILABLE
+DSH repository path          = /home/z/deepseek-harness
+                               (github.com/deepseek-ai/deepseek-harness, cloned read-only)
+DSH current commit           = d347e703908d0406b7a7ef80e3a0e594d86b2215
+DSH branch                   = master
+DSH release                  = 0.1.3-alpha.1 (root package.json @deepseek-ai/dsh-root)
+DSH working tree status      = CLEAN (git status --porcelain empty; verified by the suite runner)
+Node version                 = v24.3.0 (engines: ^22.19.0 || >=24.0.0)
+pnpm version                 = 11.7.0 (packageManager pin honored)
+CORDIS_VERSION_OR_SOURCE     = @deepseek-ai/cordis 4.0.2, vendored at vendor/cordis
+                               (upstream pin recorded in vendor/README.md:
+                                cordis 4.0.0-rc.7 @ cordiverse/cordis 56b3d4f7)
+DSH_UPSTREAM_COMMIT          = d347e703908d0406b7a7ef80e3a0e594d86b2215
 ```
 
-A filesystem-wide search of this sandbox found **no DeepSeek Harness (DSH)
-checkout and no Cordis checkout**. There is no pinned upstream revision to
-inspect, therefore no DSH API symbol could be verified against source.
+History: at build start no upstream was present and a documented cordis-mini
+fixture was created (ADR-0000). The real repository was then located via web
+search, cloned, pinned, built (`pnpm build:lib:host` + `pnpm build:lib:client`,
+the official build path), and every plugin was re-authored against the REAL
+pinned APIs. The fixture remains ONLY as a Level-A lifecycle harness
+(`src/harness/cordis-mini`) and is never cited as DSH-compatibility evidence.
 
-Consequences, enforced strictly:
+No git operations were performed on the upstream checkout beyond clone and
+read-only inspection. `UPSTREAM_CORE_MODIFIED = NO`, `UPSTREAM_PATCH_COUNT = 0`
+(verified every suite run; the suite FAILS if the commit changes or the
+worktree becomes dirty).
 
-- No claim is made anywhere in this repository that a DSH API symbol
-  (`ctx.llm`, `ctx.sessions`, `ctx.systemPrompt`, `ctx.subagents`,
-  `ctx.workflowEngine`, `ctx.compaction`, `ctx.tokenMeter`, …) was verified
-  against a pinned upstream. See §3 below.
-- No git operations were performed (`git pull`, `reset --hard`, `checkout`,
-  dependency upgrades). `UPSTREAM_CORE_MODIFIED = NO` trivially, because no
-  upstream exists to modify.
-- The final completion verdict is capped at
-  `DSH SUPREME PLUGIN SUITE = PARTIAL` per Spec §34, with the exact blocking
-  gate being `UPSTREAM_INTEGRITY_GATE = BLOCKED (upstream absent)`.
+## 2. API evidence map (verified against the pinned source)
 
-## 2. What was actually built
-
-The complete, project-owned DSH Supreme v1 implementation per Spec §0–§33:
-
-- 7 plugins under `plugins/` (policy, observability, benchmark, router,
-  verifier, memory-policy, workflow-policy) — pure TypeScript, typed public
-  contracts, deterministic config validation, lifecycle-safe.
-- Gate checks under `checks/` (runtime verification suites, Level A unit +
-  Level B integration + Level C composition), executed by `suite/runner.ts`.
-- 4 composition profiles under `config/` (core, standard, supreme, lab).
-- Docs: ADRs, runbooks, per-plugin READMEs.
-
-## 3. The one and only fixture: `fixtures/cordis-mini`
-
-Spec §6 explicitly permits: *"If exact package-manager/module-resolution
-constraints require a development fixture inside the pinned DSH workspace,
-create only the minimum loader fixture necessary. Keep the authoritative
-Supreme implementation in project-owned paths. Document any temporary fixture
-explicitly."*
-
-Because no DSH/Cordis upstream exists in this sandbox, the minimum fixture is:
+Every DSH service consumed by Supreme code, with its pinned source location:
 
 ```text
-dsh-supreme/fixtures/cordis-mini/index.ts          Cordis-compatible kernel:
-                                                   definePlugin, Context, inject,
-                                                   service registry, event bus,
-                                                   lifecycle + Loader with
-                                                   topological dependency boot,
-                                                   cycle detection, timings,
-                                                   reverse-order disposal.
-dsh-supreme/fixtures/cordis-mini/dsh-mini-core.ts  Emulated harness core ("DSH
-                                                   native" stand-ins): llm catalog,
-                                                   sessions, systemPrompt,
-                                                   subagents, workflowEngine,
-                                                   tokenMeter, lifecycle events.
+SERVICE = ctx.llm
+PACKAGE = @deepseek-ai/dsh-llm
+SOURCE_FILE = packages/llm/llm/src/index.ts
+EXACT_SYMBOL = LlmRuntime (super(ctx, 'llm') :339)
+METHOD_OR_SIGNATURE = listProviders(): LlmProviderInfo[] :466;
+                      resolveModelInfo(provider, model, signal?) :726;
+                      registerAdapter(providers, adapter) :384
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.sessions
+PACKAGE = @deepseek-ai/dsh-session
+SOURCE_FILE = packages/core/session/src/index.ts
+EXACT_SYMBOL = SessionStore (super(ctx, 'sessions') :892)
+METHOD_OR_SIGNATURE = create(id?, options?): Session :~890
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.systemPrompt
+PACKAGE = @deepseek-ai/dsh-system-prompt
+SOURCE_FILE = packages/core/system-prompt/src/index.ts
+EXACT_SYMBOL = SystemPrompt (super(ctx, 'systemPrompt'))
+METHOD_OR_SIGNATURE = section(section: PromptSection): () => void
+                      (PromptSection = { name, order, text | (ctx) => string })
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.tokenMeter
+PACKAGE = @deepseek-ai/dsh-token-meter
+SOURCE_FILE = packages/llm/token-meter/src/index.ts
+EXACT_SYMBOL = TokenMeter (super(ctx, 'tokenMeter') :110)
+METHOD_OR_SIGNATURE = measure(session, requestHeader?): TokenMeasurement
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.subagents
+PACKAGE = @deepseek-ai/dsh-subagent
+SOURCE_FILE = packages/subagent/subagent/src/index.ts
+EXACT_SYMBOL = SubagentRuntime (super(ctx, 'subagents') :137)
+METHOD_OR_SIGNATURE = registerProvider(provider), start(name, request), list()
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.workflowEngine
+PACKAGE = @deepseek-ai/dsh-workflow
+SOURCE_FILE = packages/workflow/workflow/src/index.ts
+EXACT_SYMBOL = WorkflowEngine, abstract seam (:33; impl = dsh-workflow-worker-thread)
+METHOD_OR_SIGNATURE = start(request: WorkflowStartRequest): WorkflowRun
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+SERVICE = ctx.credentials
+PACKAGE = @deepseek-ai/dsh-credentials
+SOURCE_FILE = packages/credentials/credentials/src/index.ts
+EXACT_SYMBOL = CredentialProvider, abstract seam (:172)
+METHOD_OR_SIGNATURE = describe(ref): CredentialInfo {configured, source?, writable} — value-free
+PINNED_COMMIT = d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+EVENT SEAMS (consumed by supreme-observability; full map with line refs):
+packages/core/session/src/index.ts:39-83  (session/created, session/disposed, session/event)
+packages/core/agent/src/runtime-types.ts  (agent/request, agent/request-error)
+packages/core/tools/src/index.ts:134-179  (tools/execute)
+packages/subagent/subagent/src/index.ts   (subagent/start, subagent/end)
+packages/workflow/workflow/src/index.ts   (workflow/start, workflow/end)
+Session-log event vocabulary: packages/core/session/src/types.ts:260-376
+(data-bearing shape: {type, seq, time, data: {...}}; compaction vocabulary is
+merged via @deepseek-ai/dsh-session/types module augmentation)
 ```
 
-**Everything else is authoritative project-owned implementation**, not fixture.
+Explicitly NOT invented anywhere in this repository: `ctx.memory`,
+`ctx.metrics`, `ctx.router`, `ctx.permissions` (the pinned source does not
+declare them; permission behavior lives in ctx.approval/permissionPresets).
 
-Fixture rules (all enforced in code and checks):
+## 3. Composition mechanism (verified)
 
-1. Fixture services expose only capabilities the spec attributes to real DSH
-   services. They do NOT invent `ctx.memory`, `ctx.metrics`, `ctx.router`,
-   `ctx.permissions` — those names are never created anywhere.
-2. Supreme plugins obtain harness capabilities exclusively by declaring
-   `inject` names (`llm`, `sessions`, `systemPrompt`, `subagents`,
-   `workflowEngine`, `tokenMeter`, `events`) — exactly the seam a real DSH
-   integration would use.
-3. When a real pinned DSH becomes available, migration = replace
-   `fixtures/cordis-mini` imports with the pinned Cordis plugin API and map
-   the event names in `plugins/supreme-observability/event-map.ts` to the
-   exact pinned event names (single-file change). No Supreme plugin contains
-   guessed DSH event names as authoritative — the map is the only place names
-   live, and it is flagged `MUST VERIFY AGAINST PINNED UPSTREAM`.
+- cordis.yml = top-level entry list; DSH profiles compose from patch layers:
+  bundle layers (`dsh.bundle.patch`) → profile `cordis.patch.yml` → home layer
+  → `--patch` overlays (apps/cli/src/profile-boot.ts, vendor/include).
+- Programmatic boot: `boot(binName, absoluteConfigPath, patches?, prepare?)`
+  from `@deepseek-ai/dsh-app-boot` — the same call the CLI makes. The
+  project-owned harness `real/boot.mjs` uses loadProfile + heal + boot +
+  `ctx.fiber.dispose()` exactly like apps/cli/src/profile-boot.ts.
+- Plugin conventions: Object plugin `{name, inject, Config, apply(ctx, config)}`;
+  Config = any StandardSchemaV1 (zod 4 used; schemastery is the in-repo default);
+  `ctx.provide(name, service)` registers; `ctx.effect(execute)` runs execute at
+  apply and treats the RETURN VALUE as the disposer; `ctx.on(name, handler)`
+  returns an unsubscribe effect.
 
-## 4. Event names used by the fixture harness
+## 4. Claim policy
 
-The fixture harness emits these lifecycle events (documented stand-ins for the
-official DSH event seams, to be re-mapped against the pinned source later):
-
-```text
-session.started, session.ended
-turn.started, turn.ended
-step.started, step.ended
-llm.request.started, llm.request.finished
-tool.call, tool.result
-subagent.spawned, subagent.ended
-workflow.started, workflow.ended
-compaction.performed
-token.pressure
-error
-```
-
-## 5. Claim policy
-
-Any statement in this repo about behavior is backed by an executable gate in
-`checks/` that reproduces it through the suite runner (`suite/runner.ts`).
-Statements about *real DSH* behavior are not made and cannot be made until the
-upstream integrity gate is unblocked.
+Every behavioral claim is reproduced by an executable gate:
+`bun run dsh-supreme/src/suite/cli.ts` (46 unit checks + 5 real-loader boots +
+sentinel scan + upstream integrity + performance baselines). The current
+recorded verdict is `COMPLETE` — see `dsh-supreme/README.md` for the numbers.
+Statements about future upstream revisions must be re-verified via
+docs/runbooks/upgrade-pinned-dsh.md.

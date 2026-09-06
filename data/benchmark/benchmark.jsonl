@@ -1,0 +1,16 @@
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788703206424}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvpf6n_882abf33","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703206431}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvpf6n_882abf33","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703206431,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788703206440}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtpvpf6n_882abf33","qualityScore":0.9,"scoredAt":1788703206441}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788703207693}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvpg61_7c1f4e9a","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703207705}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvpg61_7c1f4e9a","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703207705,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788703207709}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtpvpg61_7c1f4e9a","qualityScore":0.9,"scoredAt":1788703207710}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788703376877}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvt2pl_53aaa07f","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703376889}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvt2pl_53aaa07f","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703376889,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788703376892}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtpvt2pl_53aaa07f","qualityScore":0.9,"scoredAt":1788703376893}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788703378399}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvt3vt_7ac82242","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703378409}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtpvt3vt_7ac82242","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788703378409,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788703378413}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtpvt3vt_7ac82242","qualityScore":0.9,"scoredAt":1788703378414}

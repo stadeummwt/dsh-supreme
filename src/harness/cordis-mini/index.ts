@@ -137,9 +137,9 @@ interface RegistryEntry {
   owner: string;
 }
 
-function extractPlugin(module: unknown, entry: string): PluginDefinition {
-  if (module && typeof module === "object") {
-    const mod = module as Record<string, unknown>;
+function extractPlugin(entryModule: unknown, entry: string): PluginDefinition {
+  if (entryModule && typeof entryModule === "object") {
+    const mod = entryModule as Record<string, unknown>;
     const candidate = mod.plugin ?? mod.default;
     if (
       candidate &&
@@ -155,7 +155,7 @@ function extractPlugin(module: unknown, entry: string): PluginDefinition {
 
 function makeEventBus(): EventBus & { emitRaw(event: string, payload: unknown): void } {
   const listeners = new Map<string, Set<EventHandler>>();
-  return {
+  const bus: EventBus & { emitRaw(event: string, payload: unknown): void } = {
     on(event, handler) {
       let set = listeners.get(event);
       if (!set) {
@@ -169,7 +169,7 @@ function makeEventBus(): EventBus & { emitRaw(event: string, payload: unknown): 
     },
     emit(event, payload) {
       // emitRaw never throws: a failing listener is isolated (fail-open).
-      this.emitRaw(event, payload ?? {});
+      bus.emitRaw(event, payload ?? {});
     },
     emitRaw(event, payload) {
       const set = listeners.get(event);
@@ -189,6 +189,7 @@ function makeEventBus(): EventBus & { emitRaw(event: string, payload: unknown): 
       return total;
     },
   };
+  return bus;
 }
 
 function makeLogger(pluginName: string): CordisLogger {
@@ -257,11 +258,11 @@ export class Kernel {
     for (const spec of profile.plugins) {
       if (spec.enabled === false) continue;
       try {
-        const module = modules[spec.entry];
-        if (module === undefined) {
+        const entryModule = modules[spec.entry];
+        if (entryModule === undefined) {
           throw new Error(`entry "${spec.entry}" not found in module registry`);
         }
-        pending.push({ def: extractPlugin(module, spec.entry), spec });
+        pending.push({ def: extractPlugin(entryModule, spec.entry), spec });
       } catch (err) {
         errors.push({
           plugin: spec.entry,
@@ -332,30 +333,29 @@ export class Kernel {
   }
 
   private makeContext(def: PluginDefinition, config: Record<string, unknown>): Context {
-    const kernel = this;
     const logger = makeLogger(def.name);
     return {
       pluginName: def.name,
       config,
       logger,
       events: this.bus,
-      provide<T>(name: ServiceName, service: T): void {
-        if (kernel.registry.has(name)) {
+      provide: <T>(name: ServiceName, service: T): void => {
+        if (this.registry.has(name)) {
           throw new DuplicateServiceError(name, def.name);
         }
-        kernel.registry.set(name, { value: service, owner: def.name });
+        this.registry.set(name, { value: service, owner: def.name });
       },
-      resolve<T = unknown>(name: ServiceName): T {
-        const entry = kernel.registry.get(name);
+      resolve: <T = unknown>(name: ServiceName): T => {
+        const entry = this.registry.get(name);
         if (!entry) throw new ServiceNotFoundError(name, def.name);
         return entry.value as T;
       },
-      tryResolve<T = unknown>(name: ServiceName): T | undefined {
-        const entry = kernel.registry.get(name);
+      tryResolve: <T = unknown>(name: ServiceName): T | undefined => {
+        const entry = this.registry.get(name);
         return entry ? (entry.value as T) : undefined;
       },
-      onDispose(fn: () => void | Promise<void>): void {
-        kernel.disposalCallbacks.push({ plugin: def.name, fn });
+      onDispose: (fn: () => void | Promise<void>): void => {
+        this.disposalCallbacks.push({ plugin: def.name, fn });
       },
     };
   }

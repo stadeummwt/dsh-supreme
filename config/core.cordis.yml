@@ -1,0 +1,17 @@
+# DSH SUPREME — CORE composition (Spec §16): clean DSH baseline.
+# Optional Supreme plugins: supreme-policy ONLY.
+- insert:
+    - id: supreme-minimal-probe
+      name: "__SUPREME_DIST__/supreme-minimal-probe/index.mjs"
+      config:
+        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/minimal-probe.markers.jsonl"
+
+    - id: supreme-boot-probe
+      name: "__SUPREME_DIST__/supreme-boot-probe/index.mjs"
+      config:
+        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/boot-probe-core.markers.jsonl"
+
+    - id: supreme-policy
+      name: "__SUPREME_DIST__/supreme-policy/index.mjs"
+      config:
+        executionClass: CORE

@@ -1,0 +1,77 @@
+# DSH SUPREME — SUPREME composition (Spec §16): the complete seven-plugin suite.
+# Synthetic keyless scenario: deepseek candidate validated against the LIVE
+# llm catalog (provider + model resolution); credential/cost metadata is a
+# documented synthetic assumption (credentialMode: config-owned).
+- insert:
+    - id: supreme-policy
+      name: "__SUPREME_DIST__/supreme-policy/index.mjs"
+      config:
+        executionClass: SUPREME
+
+    - id: supreme-observability
+      name: "__SUPREME_DIST__/supreme-observability/index.mjs"
+      config:
+        dataDir: "__PROJECT_ROOT__/dsh-supreme/data/observability"
+
+    - id: supreme-benchmark
+      name: "__SUPREME_DIST__/supreme-benchmark/index.mjs"
+      config:
+        dataDir: "__PROJECT_ROOT__/dsh-supreme/data/benchmark"
+
+    # Spec §30: the keyless synthetic end-to-end scenario uses fake/test
+    # providers. This adapter registers `synthetic-free` through the OFFICIAL
+    # ctx.llm.registerAdapter() seam; remove it and configure real providers
+    # for production use.
+    - id: supreme-fake-llm
+      name: "__SUPREME_DIST__/supreme-fake-llm/index.mjs"
+      config:
+        provider: synthetic-free
+
+    - id: supreme-router
+      name: "__SUPREME_DIST__/supreme-router/index.mjs"
+      config:
+        candidates:
+          - provider: synthetic-free
+            credentialMode: config-owned
+            credentialConfigured: true
+            quotaHeadroom: 0.95
+            models:
+              - model: synthetic-mini
+                costClass: FREE_CONFIRMED
+                capabilities: [chat]
+                contextWindow: 32768
+                failureDomain: synthetic
+          - provider: synthetic-paid
+            credentialMode: config-owned
+            credentialConfigured: true
+            quotaHeadroom: 0.9
+            models:
+              - model: synthetic-paid-large
+                costClass: PAID
+                capabilities: [chat]
+                contextWindow: 131072
+                failureDomain: synthetic-paid
+
+    - id: supreme-verifier
+      name: "__SUPREME_DIST__/supreme-verifier/index.mjs"
+      config:
+        allowedRoots:
+          - "__PROJECT_ROOT__/dsh-supreme/data"
+
+    - id: supreme-memory-policy
+      name: "__SUPREME_DIST__/supreme-memory-policy/index.mjs"
+      config:
+        registerPromptSection: false
+        projectKnowledge:
+          - id: project-overview
+            text: "DSH Supreme v1: seven host-side policy plugins composed on DeepSeek Harness."
+            priority: 60
+
+    - id: supreme-workflow-policy
+      name: "__SUPREME_DIST__/supreme-workflow-policy/index.mjs"
+      config: {}
+
+    - id: supreme-gate-driver
+      name: "__SUPREME_DIST__/supreme-gate-driver/index.mjs"
+      config:
+        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/gates-supreme.markers.jsonl"
