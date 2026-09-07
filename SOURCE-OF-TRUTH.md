@@ -128,3 +128,30 @@ sentinel scan + upstream integrity + performance baselines). The current
 recorded verdict is `COMPLETE` — see `dsh-supreme/README.md` for the numbers.
 Statements about future upstream revisions must be re-verified via
 docs/runbooks/upgrade-pinned-dsh.md.
+
+## 5. Re-verification record (post sandbox wipe)
+
+The sandbox was cleaned between sessions and `/home/z/deepseek-harness` (plus
+project `node_modules/@deepseek-ai` links) was removed. Full recovery was
+performed and every gate was re-executed fresh:
+
+```text
+RE-CLONE          = github.com/deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215 (verified via git log -1)
+BUILD             = official tsconfig graph, memory-batched: tsc -b per reference
+                    (host 217/217 refs, client 60/60 refs, 0 errors) + tsdown host/client faces
+                    [batching only because the sandbox has 3.9 GiB RAM; a single
+                     tsc -b over 217 refs OOMs. Same tsconfigs, same graph, per-ref
+                     invocations with a fresh 2 GB heap each. No upstream file modified.]
+RESOLUTION        = node_modules/@deepseek-ai/{dsh-app-boot,cordis} symlinks recreated
+MINIMAL REAL GATE = load=PASS effect=PASS dispose=PASS (fresh run)
+4 COMPOSITIONS    = core ok (supreme7=[1000000]), standard ok ([1100110]),
+                    supreme ok (9/9 gates), lab ok (9/9 gates), disposeError=null
+SUITE             = exit 0, 46/46 unit checks, 5/5 real boots, sentinelLeaks=0,
+                    paidAutomaticFallback=DISABLED, patches=0, worktree CLEAN,
+                    VERDICT=COMPLETE
+DASHBOARD E2E     = browser run: click "Run Full Verification" → COMPLETE rendered,
+                    no console errors, no mobile (390px) horizontal overflow
+BENCHMARK EVIDENCE = live routing score improved 0.6925 → 0.8125 as synthetic-free
+                    samples accumulated 1 → 9 across runs (historical-quality signal,
+                    benchmark-informed routing confirmed on the real runtime)
+```
