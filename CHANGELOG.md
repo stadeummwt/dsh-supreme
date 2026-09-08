@@ -2,6 +2,26 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.2.1 — distribution policy correction (manual, owner-driven)
+
+Correction release: a listing PR (#4686) had been opened against
+`awesome-dsh-plugin/awesome-dsh-plugin` from a fork on the owner's account.
+Per owner policy, no pull requests are opened on third-party repositories on
+their behalf — the PR was closed as not-planned (nothing merged) and the fork
+was deleted the same day.
+
+### Changed
+
+- **`distribution/` (new)** — `awesome-dsh-entry.yml` (catalog-ready entry,
+  validator-conformant keys only) + `SUBMISSION-GUIDE.md` (how dsh-market
+  auto-feeds from the awesome-dsh-plugin catalog, pre-flight gate checklist,
+  exact manual submission commands, npm-publish note). Listing is now an
+  explicit owner-driven manual step.
+- README: new "Distribution (manual, owner-driven)" section + directory
+  layout entry. Code, plugins, suite verdicts and E2E evidence unchanged
+  from 1.2.0 (61/61 checks, 5/5 boots, `V12_E2E_COMPLETE`,
+  `BUNDLE_E2E_COMPLETE`, `COMPOSITIONS_E2E_COMPLETE`).
+
 ## 1.2.0 — deterministic enforcement + evidence surface (ECC/v3-review backlog implemented)
 
 Every v1.2 feature binds to a REAL pinned upstream seam, ships with engine

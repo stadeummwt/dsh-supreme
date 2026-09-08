@@ -1,0 +1,24 @@
+# Draft entry for awesome-dsh-plugin — MANUAL SUBMISSION ONLY.
+#
+# This file is a prepared artifact, NOT an automated submission. The plugin
+# suite owner (you) decides if/when to open the pull request yourself.
+#
+# How to use (see SUBMISSION-GUIDE.md for the full walkthrough):
+#   1. Fork github.com/awesome-dsh-plugin/awesome-dsh-plugin
+#   2. Copy this file to: data/plugins/stadeummwt__dsh-supreme.yml
+#   3. Validate locally (commands in SUBMISSION-GUIDE.md)
+#   4. Open the PR with the title given in the guide
+#
+# Format rules (from the catalog's validator, research 2026-09-08):
+#   - Allowed keys ONLY: url, name, category, description (en required, zh
+#     optional). Any other key is rejected by validateEntries.
+#   - description.en = ONE line, factual, no marketing; quote the value if it
+#     contains ": ". Accuracy is checked against code in human review.
+#   - slug must match the repo URL: stadeummwt__dsh-supreme.
+#   - Do NOT edit README.md / TOC in the PR — they are generated.
+
+url: https://github.com/stadeummwt/dsh-supreme
+name: DSH Supreme
+category: security
+description:
+  en: "Governance suite of seven host-side policy plugins for DeepSeek Harness shipped as one dsh.bundle patch layer — cost-class and execution gates, deterministic RM0-first router, evidence verifier, bounded memory ledger with instinct policy, workflow path scoping, unicode-taint denial on tool arguments, and a 61-check verification suite"

@@ -250,6 +250,22 @@ without a `prepare` build because `dist/` is committed. Fragment paths are
 relative to the dsh process working directory — override any row from your
 own patch layer.
 
+## Distribution (manual, owner-driven)
+
+Repo policy: **no pull requests are opened on third-party repositories on
+the owner's behalf.** Prepared submission artifacts live in
+[`distribution/`](./distribution/):
+
+- `awesome-dsh-entry.yml` — catalog-ready entry (single file, category
+  `security`, validator-conformant keys only).
+- `SUBMISSION-GUIDE.md` — how listing on dsh-market actually works (it
+  auto-feeds from the awesome-dsh-plugin catalog), the pre-flight gate
+  checklist, the exact manual submission commands, and the npm-publish note.
+
+The GitHub repo already carries the `dsh-plugin` topic and a `dsh.bundle`
+manifest, so the only remaining step for listing is the manual one-file PR
+the owner chooses to make.
+
 ## Architecture summary
 
 ```text
@@ -328,6 +344,9 @@ dsh-supreme/                      (repo root as published)
 │   ├── standard.cordis.yml          # STANDARD composition
 │   ├── supreme.cordis.yml           # SUPREME composition (all 7)
 │   └── lab.cordis.yml               # LAB composition (LAB-only overrides)
+├── distribution/                    # manual submission artifacts (no auto-PRs)
+│   ├── awesome-dsh-entry.yml        # catalog entry draft (one file)
+│   └── SUBMISSION-GUIDE.md          # owner-driven listing walkthrough
 ├── real/
 │   ├── boot.mjs               # REAL DSH boot harness (Loader + root-fiber dispose)
 │   ├── bundle-verify.mjs      # E2E: real CLI install + layering (BUNDLE_E2E_COMPLETE)
