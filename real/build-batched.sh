@@ -3,9 +3,10 @@
 # Rationale: sandbox has 3.9GiB RAM; one tsc -b over 217 host refs OOMs (exit 134).
 # Runs the SAME tsconfig graph in per-project batches so each invocation gets a
 # fresh heap. Incremental tsbuildinfo makes re-runs cheap. No upstream file modified.
-# Usage: DSH_REPO=<upstream checkout> dsh-build-batched.sh <host|client> <tsconfig.json>
+# Usage: build-batched.sh <host|client> <tsconfig.json> [upstream-checkout]
 set -u
-REPO="${DSH_REPO:?set DSH_REPO to the upstream checkout}"
+REPO="${3:-${DSH_REPO:-}}"
+REPO="${REPO:?pass the upstream checkout as the 3rd argument (or set DSH_REPO)}"
 cd "$REPO" || exit 1
 TSC=./node_modules/typescript/bin/tsc
 LOG=/tmp/dsh-batched-build.log

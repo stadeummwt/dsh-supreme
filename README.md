@@ -19,7 +19,7 @@ DSH Supreme adds governance — cost/risk policy, observability, benchmark evide
 | Upstream worktree | kept **pristine** — `UPSTREAM_CORE_MODIFIED = NO`, patch count `0` |
 | Toolchain | Node v24 (v24.19.0), pnpm 11.7.0, Bun 1.3.14 (bundler) |
 
-The pinned upstream checkout is **read-only** for this project. It is resolved at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` → in-project `node_modules/.upstream/deepseek-harness` (kept inside `node_modules/` so bundler file crawls never traverse it). All Supreme code lives in project-owned paths.
+The pinned upstream checkout is **read-only** for this project. It is resolved at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` → in-project `node_modules/.upstream/deepseek-harness`. Prefer the sibling location: some upstream builds (pnpm + declaration emit) reject checkouts nested under a `node_modules` directory. All Supreme code lives in project-owned paths.
 
 ## Frozen plugin scope
 
@@ -75,10 +75,10 @@ Prerequisites: Node ≥ 24, pnpm 11.7.0 (upstream build), Bun ≥ 1.3. Commands 
 # 1. Install dependencies
 bun install
 
-# 2. Clone the pinned DSH upstream into the bundler-invisible in-project location
-mkdir -p node_modules/.upstream
-git clone https://github.com/deepseek-ai/deepseek-harness.git node_modules/.upstream/deepseek-harness
-git -C node_modules/.upstream/deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+# 2. Clone the pinned DSH upstream (default lookup: sibling ../deepseek-harness;
+#    any location works via DSH_UPSTREAM_ROOT — avoid nesting it under node_modules)
+git clone https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+git -C ../deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
 
 # 3. Build the pinned upstream libraries — official tsconfig graph, memory-batched
 #    per reference (one tsc -b over the 217-ref host graph needs ~4 GB headroom;
@@ -115,9 +115,10 @@ Each run prints one JSON result (`bootMs`, `disposeMs`, `services` presence map,
 ### Suite execution
 
 ```bash
-bun run suite            # full suite incl. 5 real boots
+bun run suite            # full suite incl. 5 real boots (needs the built upstream)
 bun run suite:json       # machine-readable SuiteReport
-bun run suite:keyless    # Level A only (no upstream required)
+bun run suite:keyless    # Level A only — runs without the upstream; verdict stays
+                         # PARTIAL (REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE)
 ```
 
 The suite exits `0` only when every mandatory gate passes (`verdict: COMPLETE`). Any failure prints the exact blocking gates.

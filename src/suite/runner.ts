@@ -339,13 +339,21 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
     join(SUPREME_ROOT, 'data'),
     join(SUPREME_ROOT, 'benchmarks', 'reports'),
   ]);
-  const commit = git(['rev-parse', 'HEAD']);
-  const status = git(['status', '--porcelain']);
-  const branch = git(['branch', '--show-current']);
-  const dshVersion =
-    (JSON.parse(readFileSync(join(DSH_ROOT, 'package.json'), 'utf8') as string) as { version?: string }).version ?? 'unknown';
-  const cordisVersion =
-    (JSON.parse(readFileSync(join(DSH_ROOT, 'vendor', 'cordis', 'package.json'), 'utf8') as string) as { version?: string }).version ?? 'unknown';
+  const upstreamPresent = existsSync(join(DSH_ROOT, 'package.json'));
+  const commit = upstreamPresent ? git(['rev-parse', 'HEAD']) : null;
+  const status = upstreamPresent ? git(['status', '--porcelain']) : null;
+  const branch = upstreamPresent ? git(['branch', '--show-current']) : null;
+  const readPkgVersion = (p: string): string => {
+    try {
+      return (JSON.parse(readFileSync(p, 'utf8') as string) as { version?: string }).version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  };
+  const dshVersion = upstreamPresent ? readPkgVersion(join(DSH_ROOT, 'package.json')) : 'unknown';
+  const cordisVersion = upstreamPresent
+    ? readPkgVersion(join(DSH_ROOT, 'vendor', 'cordis', 'package.json'))
+    : 'unknown';
 
   const perf = await measurePerformance();
 
@@ -356,9 +364,12 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
   for (const c of compositions) if (c.status === 'FAIL') blockingGates.push(`COMPOSITION:${c.name}`);
   if (leaks > 0) blockingGates.push('SECRET_SENTINEL_LEAKS');
   if (productionConfigAllowsPaid()) blockingGates.push('PAID_FALLBACK_IN_PRODUCTION_CONFIG');
-  const commitUnchanged = commit === DSH_COMMIT;
-  if (!commitUnchanged) blockingGates.push('UPSTREAM_COMMIT_CHANGED');
-  if (status && status.length > 0) blockingGates.push('UPSTREAM_WORKTREE_DIRTY');
+  const commitUnchanged = upstreamPresent ? commit === DSH_COMMIT : false;
+  if (!upstreamPresent) blockingGates.push('UPSTREAM_CHECKOUT_UNAVAILABLE');
+  else {
+    if (!commitUnchanged) blockingGates.push('UPSTREAM_COMMIT_CHANGED');
+    if (status && status.length > 0) blockingGates.push('UPSTREAM_WORKTREE_DIRTY');
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -366,13 +377,13 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
       repository: 'https://github.com/deepseek-ai/deepseek-harness',
       commit: commit ?? 'UNAVAILABLE',
       branch: branch ?? 'UNAVAILABLE',
-      worktreeClean: !status || status.length === 0,
+      worktreeClean: upstreamPresent ? !status || status.length === 0 : false,
       commitUnchanged,
       dshVersion,
       cordisVersion,
       nodeVersion: process.version,
       pnpmVersion: '11.7.0',
-      upstreamCoreModified: status && status.length > 0 ? 'YES' : 'NO',
+      upstreamCoreModified: upstreamPresent && status && status.length > 0 ? 'YES' : upstreamPresent ? 'NO' : 'UNKNOWN',
       upstreamPatchCount: 0,
     },
     realLoader: {
