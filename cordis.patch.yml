@@ -1,0 +1,48 @@
+# DSH Supreme v1.1 — bundle patch (the dsh.bundle.patch manifest target).
+#
+# Inserts the seven frozen Supreme policy plugins as profile rows. This file
+# is loaded by the profile composer (packages/boot/app-boot) when this
+# package joins a profile's `dsh.profile.bundles` layer list — e.g. via
+# `dsh plugin --profile <name> add <this package>`.
+#
+# Row `name` values are RELATIVE to this file's directory (the profile
+# composer anchors them to file:// URLs at load time), so the bundle
+# works from any install location without generated paths.
+#
+# Every row is intentionally minimal: each plugin's Config schema carries
+# safe production defaults (supreme-policy denies PAID/TRIAL; verifier runs
+# commands/network never; router starts with zero candidates — extend it
+# from YOUR profile patch layer, last write wins per row id).
+#
+# Composition contract (frozen v1 scope): the four support plugins
+# (supreme-minimal-probe, supreme-boot-probe, supreme-gate-driver,
+# supreme-fake-llm) are fixtures and are NOT part of this bundle.
+
+- insert:
+    - id: supreme-policy
+      name: ./dist/plugins/supreme-policy/index.mjs
+      config: {}
+
+    - id: supreme-observability
+      name: ./dist/plugins/supreme-observability/index.mjs
+      config: {}
+
+    - id: supreme-benchmark
+      name: ./dist/plugins/supreme-benchmark/index.mjs
+      config: {}
+
+    - id: supreme-router
+      name: ./dist/plugins/supreme-router/index.mjs
+      config: {}
+
+    - id: supreme-verifier
+      name: ./dist/plugins/supreme-verifier/index.mjs
+      config: {}
+
+    - id: supreme-memory-policy
+      name: ./dist/plugins/supreme-memory-policy/index.mjs
+      config: {}
+
+    - id: supreme-workflow-policy
+      name: ./dist/plugins/supreme-workflow-policy/index.mjs
+      config: {}

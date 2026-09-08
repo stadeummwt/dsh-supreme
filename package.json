@@ -1,14 +1,34 @@
 {
   "name": "dsh-supreme",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Seven host-side policy plugins for DeepSeek Harness, composed through DSH's vendored Cordis runtime. Pinned upstream: deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215.",
+  "description": "Seven host-side policy plugins for DeepSeek Harness, composed through DSH's vendored Cordis runtime. Installable as a dsh bundle: dsh plugin --profile <name> add <this package>. Pinned upstream: deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215.",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "cordis.patch.yml",
+    "dist",
+    "src",
+    "config",
+    "real",
+    "docs",
+    "benchmarks",
+    "CHANGELOG.md",
+    "README.md",
+    "SOURCE-OF-TRUTH.md",
+    "VISION.md",
+    "AGENTS.md"
+  ],
   "scripts": {
     "suite": "bun run src/suite/cli.ts",
     "suite:json": "bun run src/suite/cli.ts --json",
     "suite:keyless": "bun run src/suite/cli.ts --skip-real-boots",
     "boot": "node real/boot.mjs",
+    "bundle:verify": "node real/bundle-verify.mjs",
     "build:upstream": "DSH_REPO=\"${DSH_UPSTREAM_ROOT:-}\"; [ -n \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/../deepseek-harness\"; [ -d \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/node_modules/.upstream/deepseek-harness\"; SUPREME_ROOT=\"$(pwd)\"; \"$SUPREME_ROOT/real/build-batched.sh\" host \"$DSH_REPO/tsconfig.host.json\" \"$DSH_REPO\" && cd \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE host && \"$SUPREME_ROOT/real/build-batched.sh\" client \"$DSH_REPO/tsconfig.client.json\" \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE client"
   },
   "dependencies": {

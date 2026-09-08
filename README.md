@@ -1,6 +1,6 @@
-# DSH SUPREME v1
+# DSH SUPREME v1.1
 
-**Seven host-side policy plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), composed through DSH's vendored Cordis runtime.**
+**Seven host-side policy plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), composed through DSH's vendored Cordis runtime — installable as a [`dsh` bundle](#install-as-a-dsh-bundle-v11) since v1.1.**
 
 DSH Supreme adds governance — cost/risk policy, observability, benchmark evidence, model routing, deterministic verification, memory selection policy, and workflow limits — **without modifying a single line of the pinned upstream**. Every Supreme plugin is an ordinary Cordis plugin (`name` / `inject` / `Config` / `apply(ctx, config)`) that mounts next to the DSH core and consumes official DSH services and event seams.
 
@@ -122,6 +122,31 @@ bun run suite:keyless    # Level A only — runs without the upstream; verdict s
 ```
 
 The suite exits `0` only when every mandatory gate passes (`verdict: COMPLETE`). Any failure prints the exact blocking gates.
+
+## Install as a dsh bundle (v1.1)
+
+The repository IS the bundle: `package.json` declares `dsh.bundle.patch` →
+[`cordis.patch.yml`](./cordis.patch.yml), which inserts the seven frozen plugins
+as profile rows. Any profile can adopt Supreme through the official plugin flow:
+
+```bash
+# from a local checkout…
+dsh plugin --profile <your-profile> add /path/to/dsh-supreme
+# …or straight from GitHub
+dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
+
+# prove an install end-to-end (runs the real CLI install + boot + layering checks)
+bun run bundle:verify
+```
+
+The bundle mounts the seven plugins with safe production defaults
+(PAID/TRIAL denied, commands/network off, zero router candidates). Extend
+candidates, project knowledge, and workflow limits from YOUR profile patch
+layer — the composer applies `last write wins` per row id, so user config
+always beats bundle defaults. The four support/fixture plugins
+(`supreme-minimal-probe`, `supreme-boot-probe`, `supreme-gate-driver`,
+`supreme-fake-llm`) are NOT part of the bundle: they are test fixtures for the
+suite and never ship into user profiles.
 
 ## Architecture summary
 

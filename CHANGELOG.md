@@ -2,6 +2,47 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.1.0 — dsh.bundle: installable via `dsh plugin add`
+
+### Added
+
+- **`cordis.patch.yml`** (package root) — the `dsh.bundle.patch` manifest target.
+  Inserts the seven frozen Supreme plugins as profile rows with `config: {}`
+  (every plugin's zod Config defaults fill in: PAID/TRIAL denied, commands and
+  network off, zero router candidates). The four support/fixture plugins are
+  deliberately NOT part of the bundle.
+- **`package.json`** declares `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`
+  (v1.1.0). Row `name` values are patch-relative (`./dist/plugins/<p>/index.mjs`),
+  anchored to `file://` URLs by the profile composer, so the bundle installs
+  from any location without generated paths.
+- **`real/bundle-verify.mjs`** (`bun run bundle:verify`) — END-TO-END proof of
+  the real install path, no simulation:
+  1. runs the REAL `dsh plugin --profile supreme-bundle add <package>` CLI
+     (pnpm forwarder + reconciler from the pinned upstream),
+  2. asserts the reconciler appended `dsh-supreme` to `dsh.profile.bundles`,
+  3. asserts the packed copy carries `cordis.patch.yml` + `dist/`,
+  4. writes a USER patch layer override (observability `dataDir`) and boots
+     through `loadProfile` + `boot()` — proving bundle rows mount next to
+     `dsh-base` and the user layer still wins last write per row id,
+  5. creates a REAL session and asserts the event lands in the overridden
+     store through the bundle-installed instance,
+  6. disposes cleanly via the root fiber.
+  Verified result: `BUNDLE_E2E_COMPLETE` — bundles `[@deepseek-ai/dsh-base,
+  dsh-supreme]`, 13 services mounted, boot ~0.9 s, dispose ~23 ms.
+
+### Usage
+
+```sh
+# from a checkout of this repo (pnpm file: spec), a git URL also works:
+dsh plugin --profile <your-profile> add /path/to/dsh-supreme
+# or from GitHub once pushed:
+dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
+```
+
+The bundle mounts the seven plugins with safe defaults; extend candidates,
+knowledge, and limits from your own profile patch layer (`last write wins`
+per row id). Verify an install with `bun run bundle:verify`.
+
 ## 1.0.0 — v1 release (pinned upstream `d347e703`)
 
 ### Verified (executable gates, `bun run suite`)

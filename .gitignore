@@ -1,3 +1,4 @@
 node_modules/
 /upstream/
 .dsh-home/
+.dsh-home-bundle-e2e/
