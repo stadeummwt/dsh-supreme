@@ -3,12 +3,20 @@
  * report. Exit 0 when every executable gate passed (see verdict + blockingGates
  * for the honest DSH-upstream status per Spec §34).
  *
- * Run: bun run dsh-supreme/src/suite/cli.ts [--skip-real-boots] [--json]
+ * Run: bun run dsh-supreme/src/suite/cli.ts [--skip-real-boots] [--expect-partial] [--json]
+ *
+ * --expect-partial (CI keyless mode): the DOCUMENTED keyless outcome is
+ * VERDICT PARTIAL where the only permitted blockers are the upstream-absence
+ * pair { REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE }. Exit 0 iff the
+ * report matches exactly that shape (blockers must be a SUBSET of the pair and
+ * REAL_BOOT_SKIPPED must be present); any real failure — UNIT:*, leaks,
+ * hygiene/audit/schema findings — adds a blocker outside the pair and exits 1.
  */
 import { runFullSuite } from './runner';
 
 const argv = process.argv.slice(2);
 const skipRealBoots = argv.includes('--skip-real-boots');
+const expectPartial = argv.includes('--expect-partial');
 const asJson = argv.includes('--json');
 
 const report = await runFullSuite({ skipRealBoots });
@@ -49,4 +57,18 @@ if (!asJson) {
   console.log(JSON.stringify(report, null, 2));
 }
 
+if (expectPartial) {
+  const keylessBlockers = new Set(['REAL_BOOT_SKIPPED', 'UPSTREAM_CHECKOUT_UNAVAILABLE']);
+  const matchesKeylessContract =
+    report.verdict === 'PARTIAL' &&
+    report.blockingGates.includes('REAL_BOOT_SKIPPED') &&
+    report.blockingGates.every((g) => keylessBlockers.has(g));
+  if (!matchesKeylessContract) {
+    if (!asJson) {
+      console.log(`EXPECT-PARTIAL MISMATCH  blockers=[${report.blockingGates.join(', ')}] verdict=${report.verdict}`);
+    }
+    process.exit(1);
+  }
+  process.exit(0);
+}
 process.exit(report.blockingGates.length === 0 ? 0 : 1);

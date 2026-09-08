@@ -2,6 +2,36 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.2.3 — CI: make both jobs honestly green
+
+Fixes for the first two failing CI runs (`full-suite` at 34 s, `keyless-suite`
+at 6 s). Suite semantics for humans are unchanged; the CI-side expectations
+now encode the documented outcomes instead of fighting them.
+
+### Fixed
+
+- **full-suite** failed at upstream build (`0/217 refs`) because the workflow
+  cloned the pinned upstream but never installed its dependencies —
+  `./node_modules/typescript/bin/tsc` did not exist. New step installs the
+  pinned upstream deps via **corepack + the upstream's own `packageManager`
+  pin** (the exact flow proven during the sandbox re-verification), before
+  `build:upstream`.
+- **keyless-suite** failed because the keyless verdict is honestly `PARTIAL`
+  (real boots skipped) and the CLI exits non-zero on any blocking gate — the
+  job treated the documented outcome as failure. New `--expect-partial` CLI
+  flag + `suite:keyless:ci` script: exit 0 iff verdict is `PARTIAL` and every
+  blocking gate is inside the documented upstream-absence pair
+  (`REAL_BOOT_SKIPPED`, `UPSTREAM_CHECKOUT_UNAVAILABLE`); ANY real failure
+  (`UNIT:*`, `SECRET_SENTINEL_LEAKS`, hygiene/audit/schema findings) still
+  exits 1 and fails CI.
+- keyless job now also pins Node 24 (was the runner default).
+
+### Verified
+
+- Local real run: `bun run suite:keyless` → `VERDICT PARTIAL`, exit 1
+  (unchanged honest default); `bun run suite:keyless:ci` → exit 0 with only
+  the permitted blockers.
+
 ## 1.2.2 — README overhaul (showcase-grade, evidence-bound)
 
 Full README redesign for ecosystem presentation. **No code changes** —

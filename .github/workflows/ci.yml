@@ -15,11 +15,18 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Install dependencies
         run: bun install
 
       - name: Keyless suite (Level A — deterministic engine checks + config hygiene + six-surface audit + schema contract)
-        run: bun run suite:keyless
+        # Documented keyless outcome is VERDICT PARTIAL with only the
+        # upstream-absence blockers; suite:keyless:ci exits 0 on exactly that
+        # shape and fails on ANY real failure (UNIT/leaks/hygiene/audit/schema).
+        run: bun run suite:keyless:ci
 
   full-suite:
     # Full suite incl. real-loader boots against the pinned upstream.
@@ -36,9 +43,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install pnpm (upstream build toolchain)
-        run: npm i -g pnpm@10
-
       - name: Install dependencies
         run: bun install
 
@@ -46,6 +50,12 @@ jobs:
         run: |
           git clone https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
           git -C ../deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+      - name: Install pinned upstream dependencies (official packageManager pin via corepack)
+        working-directory: ../deepseek-harness
+        run: |
+          corepack enable
+          pnpm install
 
       - name: Build the pinned upstream (memory-batched official build)
         run: npm run build:upstream

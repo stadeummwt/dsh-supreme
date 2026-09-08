@@ -388,6 +388,9 @@ bun run suite            # full suite incl. 5 real boots (needs the built upstre
 bun run suite:json       # machine-readable SuiteReport
 bun run suite:keyless    # Level A only — runs without the upstream; verdict stays
                          # PARTIAL (REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE)
+bun run suite:keyless:ci # keyless with CI-friendly exit code: 0 iff verdict is PARTIAL
+                         # with only the documented keyless blockers — any real
+                         # failure (UNIT/leaks/hygiene/audit/schema) still fails
 ```
 
 The suite exits `0` only when every mandatory gate passes (`verdict:
