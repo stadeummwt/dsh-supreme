@@ -1,7 +1,8 @@
-// dsh-supreme/src/plugins/supreme-memory-policy/index.ts
+// src/plugins/supreme-memory-policy/index.ts
 import { z } from "zod";
+import { resolve } from "node:path";
 
-// dsh-supreme/src/plugins/supreme-memory-policy/engine.ts
+// src/plugins/supreme-memory-policy/engine.ts
 var NOOP_LONG_TERM_PROVIDER = Object.freeze({
   name: "noop",
   status: "UNAVAILABLE",
@@ -68,7 +69,159 @@ function needsMemory(input) {
   return { required: true, reason: "DEFAULT_ON" };
 }
 
-// dsh-supreme/src/plugins/supreme-memory-policy/index.ts
+class LedgerValidationError extends Error {
+  issues;
+  constructor(issues) {
+    super(`invalid ledger note: ${issues.join("; ")}`);
+    this.issues = issues;
+    this.name = "LedgerValidationError";
+  }
+}
+function validateLedgerNote(raw) {
+  const issues = [];
+  if (!raw || typeof raw !== "object")
+    throw new LedgerValidationError(["note must be an object"]);
+  const rec = raw;
+  if (typeof rec.id !== "string" || rec.id.length === 0 || rec.id.length > 128)
+    issues.push("id required (≤128 chars)");
+  if (typeof rec.text !== "string" || rec.text.length === 0 || rec.text.length > 2000)
+    issues.push("text required (≤2000 chars)");
+  if (!Array.isArray(rec.tags) || rec.tags.length > 16 || rec.tags.some((t) => typeof t !== "string" || t.length > 64)) {
+    issues.push("tags must be ≤16 strings (≤64 chars)");
+  }
+  if (typeof rec.priority !== "number" || rec.priority < 0 || rec.priority > 100)
+    issues.push("priority must be within [0,100]");
+  if (typeof rec.confidence !== "number" || rec.confidence < 0 || rec.confidence > 1)
+    issues.push("confidence must be within [0,1]");
+  if (typeof rec.createdAt !== "number" || !Number.isFinite(rec.createdAt))
+    issues.push("createdAt required");
+  if (typeof rec.source !== "string" || rec.source.length === 0 || rec.source.length > 128)
+    issues.push("source required (≤128 chars)");
+  if (issues.length > 0)
+    throw new LedgerValidationError(issues);
+  const note = raw;
+  if (isSecretBearing({ id: note.id, class: "LONG_TERM", source: note.source, text: note.text, estimatedTokens: 0, priority: note.priority, tags: note.tags })) {
+    throw new LedgerValidationError(["note is credential-bearing and is rejected at admission"]);
+  }
+  return note;
+}
+
+class NoteLedger {
+  filePath;
+  fsImpl;
+  maxEntries;
+  notes = [];
+  loadedCorrupt = 0;
+  appended = 0;
+  rejected = 0;
+  loaded = false;
+  constructor(filePath, fsImpl, maxEntries) {
+    this.filePath = filePath;
+    this.fsImpl = fsImpl;
+    this.maxEntries = maxEntries;
+  }
+  async init() {
+    if (this.loaded)
+      return this.stats();
+    this.loaded = true;
+    const raw = await this.fsImpl.readFile(this.filePath).catch(() => null);
+    if (raw) {
+      for (const line of raw.split(`
+`)) {
+        if (line.length === 0)
+          continue;
+        try {
+          this.notes.push(validateLedgerNote(JSON.parse(line)));
+        } catch {
+          this.loadedCorrupt++;
+        }
+      }
+      this.trim();
+    }
+    return this.stats();
+  }
+  trim() {
+    if (this.notes.length > this.maxEntries) {
+      this.notes = this.notes.slice(this.notes.length - this.maxEntries);
+    }
+  }
+  async append(note) {
+    try {
+      validateLedgerNote(note);
+    } catch {
+      this.rejected++;
+      return false;
+    }
+    this.notes.push(note);
+    this.trim();
+    this.appended++;
+    const line = JSON.stringify(note) + `
+`;
+    this.queue = this.queue.then(async () => {
+      await this.fsImpl.mkdir(this.dirOf());
+      await this.fsImpl.appendFile(this.filePath, line);
+    }).catch(() => {
+      return;
+    });
+    await this.queue;
+    return true;
+  }
+  queue = Promise.resolve();
+  list() {
+    return [...this.notes];
+  }
+  stats() {
+    return { entries: this.notes.length, loadedCorrupt: this.loadedCorrupt, appended: this.appended, rejected: this.rejected };
+  }
+  async flush() {
+    await this.queue.catch(() => {
+      return;
+    });
+  }
+  dirOf() {
+    const idx = this.filePath.lastIndexOf("/");
+    return idx > 0 ? this.filePath.slice(0, idx) : ".";
+  }
+}
+function tokenSet(text) {
+  const out = new Set;
+  for (const word of text.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? [])
+    out.add(word);
+  return out;
+}
+function ledgerRelevanceScore(note, taskTokens) {
+  const noteTokens = tokenSet(`${note.text} ${note.tags.join(" ")}`);
+  let overlap = 0;
+  for (const t of noteTokens)
+    if (taskTokens.has(t))
+      overlap++;
+  return overlap;
+}
+var DEFAULT_INSTINCT_PARAMS = Object.freeze({
+  minConfidence: 0.7,
+  maxInjected: 6,
+  relevanceRanking: true
+});
+function selectLedgerNotes(notes, taskText, params) {
+  const taskTokens = tokenSet(taskText);
+  const eligible = notes.filter((n) => n.confidence >= params.minConfidence);
+  const scored = eligible.map((n) => ({ note: n, relevance: ledgerRelevanceScore(n, taskTokens) }));
+  scored.sort((a, b) => params.relevanceRanking ? b.relevance - a.relevance || b.note.priority - a.note.priority || b.note.createdAt - a.note.createdAt || a.note.id.localeCompare(b.note.id) : b.note.priority - a.note.priority || b.note.createdAt - a.note.createdAt || a.note.id.localeCompare(b.note.id));
+  return scored.slice(0, params.maxInjected).map((s) => s.note);
+}
+function ledgerNotesToItems(notes) {
+  return notes.map((n) => ({
+    id: `ledger:${n.id}`,
+    class: "TASK_RELEVANT",
+    source: `ledger:${n.source}`,
+    text: n.text,
+    estimatedTokens: estimateTokens(n.text),
+    priority: n.priority,
+    tags: n.tags
+  }));
+}
+
+// src/plugins/supreme-memory-policy/index.ts
 var name = "supreme-memory-policy";
 var inject = ["sessions", "systemPrompt"];
 var Config = z.object({
@@ -79,12 +232,49 @@ var Config = z.object({
     text: z.string().min(1),
     priority: z.number().min(0).max(100).default(50),
     tags: z.array(z.string()).default([])
-  })).default([])
+  })).default([]),
+  ledgerEnabled: z.boolean().default(false),
+  ledgerDir: z.string().default("dsh-supreme/data/ledger"),
+  ledgerFileName: z.string().default("ledger.jsonl"),
+  ledgerMaxEntries: z.number().int().min(10).max(1e4).default(500),
+  minConfidence: z.number().min(0).max(1).default(0.7),
+  maxInjected: z.number().int().min(1).max(20).default(6),
+  relevanceRanking: z.boolean().default(true)
 });
-function apply(ctx, config) {
+async function apply(ctx, config) {
   const tokenMeter = ctx.get("tokenMeter");
   let longTerm = NOOP_LONG_TERM_PROVIDER;
   let latestSelection = null;
+  let ledger = null;
+  if (config.ledgerEnabled) {
+    const fs = process.getBuiltinModule("node:fs").promises;
+    const ledgerPath = resolve(config.ledgerDir, config.ledgerFileName);
+    ledger = new NoteLedger(ledgerPath, {
+      readFile: async (p) => {
+        try {
+          return await fs.readFile(p, "utf8");
+        } catch {
+          return null;
+        }
+      },
+      appendFile: (p, line) => fs.appendFile(p, line, "utf8"),
+      mkdir: (dir) => fs.mkdir(dir, { recursive: true }).then(() => {
+        return;
+      })
+    }, config.ledgerMaxEntries);
+    await ledger.init();
+    ctx.logger.info("supreme-memory-policy ledger at %s (%d entries)", ledgerPath, ledger.stats().entries);
+  }
+  const instinctParams = {
+    minConfidence: config.minConfidence,
+    maxInjected: config.maxInjected,
+    relevanceRanking: config.relevanceRanking
+  };
+  const ledgerItemsForTask = (taskText) => {
+    if (!ledger)
+      return [];
+    return ledgerNotesToItems(selectLedgerNotes(ledger.list(), taskText, instinctParams));
+  };
   const projectItems = () => config.projectKnowledge.map((entry) => ({
     id: entry.id,
     class: "PROJECT_CONTEXT",
@@ -97,7 +287,7 @@ function apply(ctx, config) {
   const service = {
     select(input) {
       const budget = input.budgetTokens ?? config.defaultBudgetTokens;
-      const items = [...projectItems(), ...longTerm.list({ taskText: input.taskText, limit: 50 })];
+      const items = [...projectItems(), ...ledgerItemsForTask(input.taskText), ...longTerm.list({ taskText: input.taskText, limit: 50 })];
       const decision = needsMemory({ taskText: input.taskText });
       if (!decision.required) {
         const empty = {
@@ -130,9 +320,20 @@ function apply(ctx, config) {
         longTerm = NOOP_LONG_TERM_PROVIDER;
       };
     },
-    longTermProviderState: () => longTerm.status
+    longTermProviderState: () => longTerm.status,
+    async ledgerAppend(note) {
+      if (!ledger)
+        return { ok: false, reason: "LEDGER_DISABLED" };
+      const accepted = await ledger.append({ ...note, createdAt: note.createdAt ?? Date.now() });
+      return accepted ? { ok: true } : { ok: false, reason: "LEDGER_NOTE_REJECTED" };
+    },
+    ledgerSelect: (taskText) => ledgerItemsForTask(taskText),
+    ledgerStats: () => ledger?.stats() ?? null
   };
   ctx.provide("supremeMemoryPolicy", Object.freeze(service));
+  if (ledger) {
+    ctx.effect(() => () => ledger?.flush(), "supreme-memory-policy.ledger-flush");
+  }
   if (config.registerPromptSection) {
     ctx.systemPrompt.section({
       name: "supreme-memory-context",
@@ -145,7 +346,7 @@ function apply(ctx, config) {
       }
     });
   }
-  ctx.logger.info("supreme-memory-policy active (budget=%d, knowledge=%d, longTerm=%s/%s)", config.defaultBudgetTokens, config.projectKnowledge.length, longTerm.name, longTerm.status);
+  ctx.logger.info("supreme-memory-policy active (budget=%d, knowledge=%d, longTerm=%s/%s, ledger=%s, instinct[minConfidence=%s maxInjected=%d relevanceRanking=%s])", config.defaultBudgetTokens, config.projectKnowledge.length, longTerm.name, longTerm.status, config.ledgerEnabled ? "on" : "off", String(config.minConfidence), config.maxInjected, String(config.relevanceRanking));
 }
 export {
   name,

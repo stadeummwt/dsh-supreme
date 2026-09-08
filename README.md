@@ -1,6 +1,12 @@
-# DSH SUPREME v1.1
+# DSH SUPREME v1.2
 
-**Seven host-side policy plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), composed through DSH's vendored Cordis runtime — installable as a [`dsh` bundle](#install-as-a-dsh-bundle-v11) since v1.1.**
+[![CI](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml/badge.svg)](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml)
+![upstream](https://img.shields.io/badge/upstream-d347e703908d-blue)
+![suite](https://img.shields.io/badge/suite-COMPLETE-brightgreen)
+![patches](https://img.shields.io/badge/upstream%20patches-0-success)
+![node](https://img.shields.io/badge/node-%E2%89%A524-green)
+
+**Seven host-side policy plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), composed through DSH's vendored Cordis runtime — installable as a [`dsh` bundle](#install-as-a-dsh-bundle-v11) since v1.1, with deterministic enforcement features (unicode-taint denial, RM0-first routing, surgical path scope, note ledger, reasoning-trace audit) since v1.2.**
 
 DSH Supreme adds governance — cost/risk policy, observability, benchmark evidence, model routing, deterministic verification, memory selection policy, and workflow limits — **without modifying a single line of the pinned upstream**. Every Supreme plugin is an ordinary Cordis plugin (`name` / `inject` / `Config` / `apply(ctx, config)`) that mounts next to the DSH core and consumes official DSH services and event seams.
 
@@ -49,16 +55,25 @@ Four **support plugins** (not part of the frozen seven, fixture-classified, no m
 Claims below are backed by executable gates. Re-run them with the suite (next section); do not trust prose.
 
 ```text
-Level A unit checks      46/46 PASS   (policy 6 · observability 5 · benchmark 5 · router 10
-                                       verifier 7 · memory 5 · workflow 8)
+Level A unit checks      61/61 PASS   (policy 9 · observability 6 · benchmark 6 · router 13
+                                       verifier 7 · memory 9 · workflow 11)
 Real-loader boots        5/5 PASS     (supreme-minimal, core, standard, supreme, lab)
-  boot times             supreme-minimal ~60 ms · core/standard/supreme/lab ~750–900 ms
+  boot times             supreme-minimal ~55 ms · core/standard/supreme/lab ~750–1000 ms
   dispose                ~20–30 ms, clean root-fiber unwind
 Keyless scenario         9/9 gates PASS in supreme + lab (real DSH session created;
-                         router selects synthetic free route — latest markers record
-                         score=0.8125; PAID candidate rejected by policy_cost)
+                         router selects synthetic free route; PAID candidate rejected
+                         by policy_cost)
 Security                 sentinel leaks = 0 · paid automatic fallback = DISABLED ·
                          production configs never set allowPaid
+v1.2 audit gates         config-key hygiene PASS · pinned-ref scan PASS ·
+                         six-surface audit PASS (prompts/hooks/mcp/permissions/secrets/
+                         agent_files) · schema contract PASS (3 published schemas)
+Bundle E2E               BUNDLE_E2E_COMPLETE (real CLI install, 13 services,
+                         user-patch override wins, upstream untouched)
+Compositions E2E         COMPOSITIONS_E2E_COMPLETE (4 fragments, presence+absence,
+                         relative dataDir write-through)
+Config-surface E2E       V3_CONFIG_REVIEW_EVIDENCE + V12_E2E_COMPLETE (every v1.2
+                         config key arrives at its service — no silent strip)
 Upstream integrity       commit unchanged, worktree clean, patches = 0
 Performance              router decision ~0.02 ms / 1k iterations ·
                          observability serialize ~0.003 ms / 1k
@@ -123,6 +138,55 @@ bun run suite:keyless    # Level A only — runs without the upstream; verdict s
 
 The suite exits `0` only when every mandatory gate passes (`verdict: COMPLETE`). Any failure prints the exact blocking gates.
 
+## v1.2 governance features (deterministic, no ML, no new deps)
+
+Every feature binds to a REAL pinned upstream seam and ships with engine checks plus boot-level proof (`bun run v12:verify`).
+
+### supreme-policy — unicode taint denial + chain-of-thought presence gate
+
+Upstream freezes tool arguments after logging (`wrappers may change only exec.signal`), so the enforceable host-side posture is **detect → audit → deny** through the official `tools/pre-execute` seam (`{ kind: 'deny', reason }` materializes an upstream error result — policy never fabricates tool output):
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `enableUnicodeSanitization` | `true` | scan tool arguments for zero-width / bidi-isolate / bidi-override / tag codepoints (U+200B–200F, U+2060–206F, U+202A–202E, U+FEFF, U+E0000–E007F) |
+| `logTaintAttempts` | `true` | record `taint_detected` observability events — class names only, values are NEVER echoed |
+| `taintPolicy` | `LOG_ONLY` | `DENY` refuses the call before dispatch |
+| `reasoningTracePolicy` | `OFF` | `AUDIT` records `cot_missing` when an assistant message carried no reasoning trace; `ENFORCE` additionally denies that session's tool calls (evidence source: pinned `assistant/message` reasoning blocks + reasoning-chunks stream records; `ENFORCE` is refused on the CORE floor) |
+
+### supreme-router — RM0-first + deterministic effort pacing
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `costFirst` | `true` | among eligible candidates, score only the cheapest cost class (`FREE_CONFIRMED` beats a rate-limited peer with better benchmark history). Hard-gate evidence for ALL candidates is preserved; set `false` for pure weighted scoring |
+| `effortPacing.enabled` | `false` | deterministic `costClass → reasoningEffort` mapping over the pinned `agent/request` seam (`LlmCallConfig.reasoningEffort` may be overridden upstream). Levels are the pinned DeepSeek adapter set: `off / low / high / max` |
+| `effortPacing.escalateOnVerifierFail` | `true` | one-step escalation (`low → high`) driven ONLY by verifier FAIL evidence via `reportVerifierOutcome()` — never model self-confidence; a PASS recovers |
+
+### supreme-workflow-policy — surgical path scope + verifier-gated close
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `allowedPaths` / `blockedPaths` | `[]` / `[]` | zero-dependency glob scope for delegations (`**` crosses segments, `*`/`?` stay in-segment); `blockedPaths` always win; empty allowlist = unrestricted |
+| `requireVerifierPassOnClose` | `false` | HIGH-risk tasks may only close with recorded verifier PASS evidence — the honest posture for STANDARD (where the verifier cannot execute commands) |
+
+### supreme-memory-policy — bounded note ledger + instinct-style injection gates
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `ledgerEnabled` | `false` | opt-in bounded, append-only JSONL note ledger (`ledgerDir`, `ledgerFileName`, `ledgerMaxEntries`) — credential-bearing notes are rejected at admission |
+| `minConfidence` | `0.7` | notes below this confidence never inject (ECC instincts analogue — recorded evidence quality, not model self-assessment) |
+| `maxInjected` | `6` | hard cap on injected notes per selection |
+| `relevanceRanking` | `true` | deterministic task-token-overlap ranking before priority (no ML, no ANN — counting) |
+
+### supreme-benchmark — provenance binding
+
+Run records accept `commitHash` (40-hex sha or `UNAVAILABLE`) and `irVersion` — malformed values are rejected by record validation, so routing evidence stays bound to the code that produced it.
+
+### Published schemas + six-surface audit
+
+- [`schemas/suite-report.schema.json`](./schemas/suite-report.schema.json), [`schemas/benchmark-record.schema.json`](./schemas/benchmark-record.schema.json), [`schemas/ledger-note.schema.json`](./schemas/ledger-note.schema.json) — third parties can validate reports/records; a suite check keeps the schemas and the code from drifting.
+- The suite now also runs a **config-key hygiene** scan (every shipped YAML row validated against the plugin's real zod schema — the silent-strip trap stays closed), a **pinned-ref** scan (external references must be pinned), and the **six-surface security audit** (prompts · hooks · mcp · permissions · secrets · agent_files — the offline AgentShield analogue).
+- v1.2 fix: running `bun run suite` from INSIDE `dsh-supreme/` no longer fakes `UPSTREAM_CHECKOUT_UNAVAILABLE` (root resolution order fixed).
+
 ## Install as a dsh bundle (v1.1)
 
 The repository IS the bundle: `package.json` declares `dsh.bundle.patch` →
@@ -137,6 +201,8 @@ dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
 
 # prove an install end-to-end (runs the real CLI install + boot + layering checks)
 bun run bundle:verify
+# prove the v1.2 config surface end-to-end (real CLI install + every v1.2 key + functional probes)
+bun run v12:verify
 ```
 
 The bundle mounts the seven plugins with safe production defaults
@@ -252,7 +318,10 @@ dsh-supreme/                      (repo root as published)
 ├── CHANGELOG.md
 ├── AGENTS.md                  ← engineering rules for future agents
 ├── SOURCE-OF-TRUTH.md         ← upstream integrity record (historical + current)
-├── package.json               # suite/boot/build scripts (zod only runtime dep)
+├── LICENSE                    ← MIT (v1.2)
+├── package.json               # suite/boot/build/verify scripts (zod + yaml deps)
+├── schemas/                   # published JSON Schemas (suite report, benchmark, ledger)
+├── .github/workflows/ci.yml   # keyless + full suite on push/PR (v1.2)
 ├── config/
 │   ├── supreme-minimal.cordis.yml   # bare-Loader probe gate
 │   ├── core.cordis.yml              # CORE composition
@@ -261,6 +330,10 @@ dsh-supreme/                      (repo root as published)
 │   └── lab.cordis.yml               # LAB composition (LAB-only overrides)
 ├── real/
 │   ├── boot.mjs               # REAL DSH boot harness (Loader + root-fiber dispose)
+│   ├── bundle-verify.mjs      # E2E: real CLI install + layering (BUNDLE_E2E_COMPLETE)
+│   ├── composition-verify.mjs # E2E: 4 composition fragments (COMPOSITIONS_E2E_COMPLETE)
+│   ├── v3-config-verify.mjs   # E2E: silent-strip proof (V3_CONFIG_REVIEW_EVIDENCE)
+│   ├── v12-config-verify.mjs  # E2E: v1.2 config surface + probes (V12_E2E_COMPLETE)
 │   └── build-batched.sh       # memory-batched official upstream build
 ├── dist/plugins/<name>/index.mjs    # bun-built ESM bundles loaded by the real Loader
 ├── data/

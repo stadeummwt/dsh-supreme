@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/stadeummwt/dsh-supreme/schemas/suite-report.schema.json",
+  "title": "DSH Supreme SuiteReport",
+  "description": "Verifiable release report emitted by the DSH Supreme suite runner (bun run suite:json). Third parties may validate reports against this schema.",
+  "type": "object",
+  "required": [
+    "generatedAt",
+    "upstream",
+    "realLoader",
+    "minimalGate",
+    "plugins",
+    "compositions",
+    "security",
+    "configHygiene",
+    "pinnedRefs",
+    "sixSurfaceAudit",
+    "schemas",
+    "performance",
+    "verdict",
+    "blockingGates"
+  ],
+  "properties": {
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "upstream": {
+      "type": "object",
+      "required": ["repository", "commit", "branch", "worktreeClean", "commitUnchanged", "dshVersion", "cordisVersion", "upstreamCoreModified", "upstreamPatchCount"],
+      "properties": {
+        "repository": { "type": "string" },
+        "commit": { "type": "string" },
+        "branch": { "type": "string" },
+        "worktreeClean": { "type": "boolean" },
+        "commitUnchanged": { "type": "boolean" },
+        "dshVersion": { "type": "string" },
+        "cordisVersion": { "type": "string" },
+        "nodeVersion": { "type": "string" },
+        "pnpmVersion": { "type": "string" },
+        "upstreamCoreModified": { "enum": ["NO", "YES", "UNKNOWN"] },
+        "upstreamPatchCount": { "type": "number" }
+      }
+    },
+    "realLoader": {
+      "type": "object",
+      "required": ["verified", "harness", "method"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "harness": { "type": "string" },
+        "method": { "type": "string" }
+      }
+    },
+    "minimalGate": {
+      "type": "object",
+      "required": ["load", "observableEffect", "dispose", "realLoader", "realCordisYml"],
+      "properties": {
+        "load": { "$ref": "#/$defs/gateStatus" },
+        "observableEffect": { "$ref": "#/$defs/gateStatus" },
+        "dispose": { "$ref": "#/$defs/gateStatus" },
+        "realLoader": { "$ref": "#/$defs/gateStatus" },
+        "realCordisYml": { "$ref": "#/$defs/gateStatus" }
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "service", "unit", "checks"],
+        "properties": {
+          "name": { "type": "string" },
+          "service": { "type": "string" },
+          "unit": { "$ref": "#/$defs/gateStatus" },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "title", "status", "durationMs"],
+              "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "status": { "enum": ["PASS", "FAIL", "ERROR"] },
+                "detail": { "type": "string" },
+                "durationMs": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "compositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "$ref": "#/$defs/gateStatus" },
+          "bootMs": { "type": "number" },
+          "disposeMs": { "type": "number" },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["gate", "status", "detail"],
+              "properties": {
+                "gate": { "type": "string" },
+                "status": { "type": "string" },
+                "detail": { "type": "string" }
+              }
+            }
+          },
+          "services": { "type": "object", "additionalProperties": { "type": "boolean" } },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "required": ["sentinelLeaks", "paidAutomaticFallback", "productionConfigAllowPaid"],
+      "properties": {
+        "sentinelLeaks": { "type": "number" },
+        "sentinelScanPaths": { "type": "array", "items": { "type": "string" } },
+        "paidAutomaticFallback": { "const": "DISABLED" },
+        "productionConfigAllowPaid": { "type": "boolean" }
+      }
+    },
+    "configHygiene": {
+      "type": "object",
+      "required": ["ok", "files", "findings"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "rows", "ok"],
+            "properties": {
+              "file": { "type": "string" },
+              "rows": { "type": "number" },
+              "ok": { "type": "boolean" }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "rowId", "kind", "detail"],
+            "properties": {
+              "file": { "type": "string" },
+              "rowId": { "type": "string" },
+              "kind": { "enum": ["UNKNOWN_KEY", "SCHEMA_VIOLATION", "UNKNOWN_PLUGIN_ID"] },
+              "detail": { "type": "string" }
+            }
+          }
+        },
+        "scanned": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pinnedRefs": {
+      "type": "object",
+      "required": ["ok", "refs", "findings"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["where", "ref", "pinned"],
+            "properties": {
+              "where": { "type": "string" },
+              "ref": { "type": "string" },
+              "pinned": { "type": "boolean" }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["where", "ref", "detail"],
+            "properties": {
+              "where": { "type": "string" },
+              "ref": { "type": "string" },
+              "detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "sixSurfaceAudit": {
+      "type": "array",
+      "description": "Six offline security surfaces (AgentShield analogue): prompts, hooks, mcp, permissions, secrets, agent_files.",
+      "items": {
+        "type": "object",
+        "required": ["surface", "label", "status", "findings", "scanned"],
+        "properties": {
+          "surface": { "enum": ["prompts", "hooks", "mcp", "permissions", "secrets", "agent_files"] },
+          "label": { "type": "string" },
+          "status": { "$ref": "#/$defs/gateStatus" },
+          "findings": { "type": "array", "items": { "type": "string" } },
+          "scanned": { "type": "number" }
+        }
+      }
+    },
+    "schemas": {
+      "type": "object",
+      "required": ["ok", "checked", "findings"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "checked": { "type": "array", "items": { "type": "string" } },
+        "findings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "required": ["routerDecisionMs", "observabilityWriteMs", "realBootMs"],
+      "properties": {
+        "routerDecisionMs": { "type": "number" },
+        "observabilityWriteMs": { "type": "number" },
+        "realBootMs": { "type": "object", "additionalProperties": { "type": "number" } }
+      }
+    },
+    "verdict": { "enum": ["COMPLETE", "PARTIAL"] },
+    "blockingGates": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "gateStatus": { "enum": ["PASS", "FAIL", "SKIP"] }
+  }
+}

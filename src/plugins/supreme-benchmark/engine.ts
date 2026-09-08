@@ -59,6 +59,10 @@ export interface BenchmarkRunData {
   provider: string;
   model: string;
   profile: string;
+  /** v1.2: upstream/IR provenance — 40-hex commit sha or UNAVAILABLE. */
+  commitHash?: string;
+  /** v1.2: task IR version bound to this run (bounded identifier). */
+  irVersion?: string;
   startedAt: number;
   finishedAt?: number;
   latencyMs?: number;
@@ -146,6 +150,20 @@ export function validateBenchmarkRecord(raw: unknown): BenchmarkRecord {
     assertCondition(typeof rec.provider === 'string', issues, 'provider required');
     assertCondition(typeof rec.model === 'string', issues, 'model required');
     assertCondition(typeof rec.startedAt === 'number', issues, 'startedAt required');
+    if (rec.commitHash !== undefined) {
+      assertCondition(
+        rec.commitHash === 'UNAVAILABLE' || (typeof rec.commitHash === 'string' && /^[a-f0-9]{40}$/.test(rec.commitHash)),
+        issues,
+        'commitHash must be a 40-hex sha or UNAVAILABLE',
+      );
+    }
+    if (rec.irVersion !== undefined) {
+      assertCondition(
+        typeof rec.irVersion === 'string' && /^[A-Za-z0-9._-]{1,32}$/.test(rec.irVersion),
+        issues,
+        'irVersion must match [A-Za-z0-9._-]{1,32}',
+      );
+    }
     if (rec.qualityScore !== undefined) {
       assertCondition(
         typeof rec.qualityScore === 'number' && rec.qualityScore >= 0 && rec.qualityScore <= 1,
@@ -307,6 +325,8 @@ export class BenchmarkStore {
     model: string;
     profile: string;
     sessionId?: string;
+    commitHash?: string;
+    irVersion?: string;
     startedAt?: number;
   }): Promise<BenchmarkRun> {
     const run: BenchmarkRun = {
@@ -319,8 +339,11 @@ export class BenchmarkStore {
       model: input.model,
       profile: input.profile,
       sessionId: input.sessionId,
+      commitHash: input.commitHash,
+      irVersion: input.irVersion,
       startedAt: input.startedAt ?? Date.now(),
     };
+    validateBenchmarkRecord(run);
     await this.persist(run);
     return run;
   }

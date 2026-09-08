@@ -1,7 +1,7 @@
-// dsh-supreme/src/plugins/supreme-router/index.ts
+// src/plugins/supreme-router/index.ts
 import { z } from "zod";
 
-// dsh-supreme/src/plugins/supreme-router/engine.ts
+// src/plugins/supreme-router/engine.ts
 var SCORE_COMPONENTS = [
   "quality",
   "health",
@@ -84,12 +84,47 @@ function normalizeWeights(raw) {
     out[k] = Math.max(0, Number.isFinite(raw[k]) ? raw[k] : 0) / sum;
   return out;
 }
+var COST_CLASS_ORDER = ["FREE_CONFIRMED", "FREE_LIMITED", "TRIAL", "PAID", "UNKNOWN"];
+function costClassRank(costClass) {
+  const idx = COST_CLASS_ORDER.indexOf(costClass);
+  return idx >= 0 ? idx : COST_CLASS_ORDER.length;
+}
+var DEFAULT_EFFORT_PACING = Object.freeze({
+  enabled: false,
+  byCostClass: Object.freeze({
+    FREE_CONFIRMED: "low",
+    FREE_LIMITED: "low",
+    TRIAL: "high",
+    PAID: "high",
+    UNKNOWN: "high"
+  }),
+  escalateOnVerifierFail: true
+});
+function baseEffortFor(pacing, costClass) {
+  if (!pacing.enabled)
+    return;
+  return pacing.byCostClass[costClass];
+}
+function escalateEffort(effort) {
+  switch (effort) {
+    case "off":
+      return "low";
+    case "low":
+      return "high";
+    case "high":
+    case "max":
+      return "max";
+    default:
+      return "high";
+  }
+}
 var DEFAULT_ROUTER_CONFIG = Object.freeze({
   weights: { ...DEFAULT_WEIGHTS },
   minBenchmarkSamples: 5,
   latencyCeilingMs: 30000,
   minQuotaHeadroom: 0.05,
-  circuit: { ...DEFAULT_CIRCUIT }
+  circuit: { ...DEFAULT_CIRCUIT },
+  costFirst: true
 });
 var HEALTH_SCORE = {
   HEALTHY: 1,
@@ -136,13 +171,25 @@ function selectRoute(deps) {
       reasonCodes,
       degraded: false,
       alternatives: [],
-      weightsUsed: weights
+      weightsUsed: weights,
+      costFirstApplied: false
     };
   }
+  let scoringSet = eligible;
+  let costFirstApplied = false;
+  if (config.costFirst && eligible.length > 1) {
+    const cheapestRank = Math.min(...eligible.map((c) => costClassRank(c.costClass)));
+    const narrowed = eligible.filter((c) => costClassRank(c.costClass) === cheapestRank);
+    if (narrowed.length > 0 && narrowed.length < eligible.length) {
+      scoringSet = narrowed;
+      costFirstApplied = true;
+      reasonCodes.push(`COST_FIRST_${COST_CLASS_ORDER[cheapestRank]}`);
+    }
+  }
   const domainCount = new Map;
-  for (const c of eligible)
+  for (const c of scoringSet)
     domainCount.set(c.failureDomain, (domainCount.get(c.failureDomain) ?? 0) + 1);
-  const scored = eligible.map((candidate) => {
+  const scored = scoringSet.map((candidate) => {
     const perfEntry = perf.get(candidate.key);
     const hasHistory = (perfEntry?.samples ?? 0) >= config.minBenchmarkSamples;
     const quality = hasHistory ? perfEntry?.avgQuality ?? 0.5 : 0.5;
@@ -189,7 +236,8 @@ function selectRoute(deps) {
       model: s.candidate.model,
       score: round4(s.score)
     })),
-    weightsUsed: weights
+    weightsUsed: weights,
+    costFirstApplied
   };
 }
 function hasExplorationEvidence(perf, config, eligible) {
@@ -204,7 +252,7 @@ function round4(v) {
   return Math.round(v * 1e4) / 1e4;
 }
 
-// dsh-supreme/src/plugins/supreme-router/index.ts
+// src/plugins/supreme-router/index.ts
 var name = "supreme-router";
 var inject = ["llm", "supremePolicy", "supremeObservability", "supremeBenchmark"];
 var candidateModelSchema = z.object({
@@ -240,7 +288,13 @@ var Config = z.object({
     failureThreshold: z.number().int().min(1).default(3),
     windowMs: z.number().int().min(1000).default(300000),
     cooldownMs: z.number().int().min(0).default(60000)
-  }).default({ failureThreshold: 3, windowMs: 300000, cooldownMs: 60000 })
+  }).default({ failureThreshold: 3, windowMs: 300000, cooldownMs: 60000 }),
+  costFirst: z.boolean().default(true),
+  effortPacing: z.object({
+    enabled: z.boolean().default(false),
+    byCostClass: z.record(z.string(), z.enum(["off", "low", "high", "max"])).default({ FREE_CONFIRMED: "low", FREE_LIMITED: "low", TRIAL: "high", PAID: "high", UNKNOWN: "high" }),
+    escalateOnVerifierFail: z.boolean().default(true)
+  }).default({ enabled: false, byCostClass: { FREE_CONFIRMED: "low", FREE_LIMITED: "low", TRIAL: "high", PAID: "high", UNKNOWN: "high" }, escalateOnVerifierFail: true })
 });
 function apply(ctx, config) {
   const deps = {
@@ -254,11 +308,24 @@ function apply(ctx, config) {
     minBenchmarkSamples: config.minBenchmarkSamples,
     latencyCeilingMs: config.latencyCeilingMs,
     minQuotaHeadroom: config.minQuotaHeadroom,
-    circuit: config.circuit
+    circuit: config.circuit,
+    costFirst: config.costFirst
+  };
+  const effortPacing = {
+    enabled: config.effortPacing.enabled,
+    byCostClass: { ...config.effortPacing.byCostClass },
+    escalateOnVerifierFail: config.effortPacing.escalateOnVerifierFail
   };
   const circuit = new CircuitBreaker(routerConfig.circuit);
   const candidatesConfig = config.candidates;
   const context = ctx;
+  const costClassByKey = new Map;
+  for (const entry of candidatesConfig) {
+    for (const model of entry.models)
+      costClassByKey.set(`${entry.provider}::${model.model}`, model.costClass);
+  }
+  const escalatedKeys = new Set;
+  const ESCALATION_LIMIT = 256;
   async function credentialConfiguredFor(entry) {
     if (entry.credentialMode === "config-owned")
       return entry.credentialConfigured;
@@ -350,10 +417,57 @@ function apply(ctx, config) {
           keys.add(`${entry.provider}::${m.model}`);
       return [...keys].map((key) => circuit.stateOf(key, now));
     },
+    effortFor({ provider, model, verifierFailed }) {
+      const costClass = costClassByKey.get(`${provider}::${model}`);
+      if (costClass === undefined)
+        return;
+      const base = baseEffortFor(effortPacing, costClass);
+      if (base === undefined)
+        return;
+      const key = `${provider}::${model}`;
+      const escalated = effortPacing.escalateOnVerifierFail && (verifierFailed === true || escalatedKeys.has(key));
+      return escalated ? escalateEffort(base) : base;
+    },
+    reportVerifierOutcome({ provider, model, passed }) {
+      if (!effortPacing.enabled || !effortPacing.escalateOnVerifierFail)
+        return;
+      const key = `${provider}::${model}`;
+      if (passed) {
+        escalatedKeys.delete(key);
+        return;
+      }
+      if (escalatedKeys.size >= ESCALATION_LIMIT && !escalatedKeys.has(key)) {
+        const oldest = escalatedKeys.values().next().value;
+        if (oldest !== undefined)
+          escalatedKeys.delete(oldest);
+      }
+      escalatedKeys.add(key);
+    },
     config: () => routerConfig
   };
   ctx.provide("supremeRouter", Object.freeze(service));
-  ctx.logger.info("supreme-router active with %d configured candidates", candidatesConfig.length);
+  ctx.on("agent/request", async (_payload, next) => {
+    const call = await next();
+    if (!effortPacing.enabled)
+      return call;
+    const costClass = costClassByKey.get(`${call.provider}::${call.model}`);
+    if (costClass === undefined)
+      return call;
+    const base = baseEffortFor(effortPacing, costClass);
+    if (base === undefined)
+      return call;
+    const escalated = effortPacing.escalateOnVerifierFail && escalatedKeys.has(`${call.provider}::${call.model}`);
+    const effort = escalated ? escalateEffort(base) : base;
+    if (call.reasoningEffort === effort)
+      return call;
+    deps.supremeObservability.record("effort_pacing", {
+      provider: call.provider,
+      model: call.model,
+      detail: `${call.reasoningEffort ?? "adapter-default"}->${effort}${escalated ? ":escalated" : ""}`
+    });
+    return { ...call, reasoningEffort: effort };
+  });
+  ctx.logger.info("supreme-router active with %d configured candidates (costFirst=%s effortPacing=%s)", candidatesConfig.length, String(routerConfig.costFirst), String(effortPacing.enabled));
 }
 function genId(prefix) {
   const g = globalThis;

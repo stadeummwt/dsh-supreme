@@ -37,6 +37,10 @@ export type BenchmarkService = {
     model: string;
     profile: string;
     sessionId?: string;
+    /** v1.2: 40-hex upstream sha or UNAVAILABLE — bound the run to its provenance. */
+    commitHash?: string;
+    /** v1.2: task IR version bound to this run. */
+    irVersion?: string;
   }): Promise<string>;
   finishRun(
     runId: string,

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/stadeummwt/dsh-supreme/schemas/benchmark-record.schema.json",
+  "title": "DSH Supreme Benchmark Record",
+  "description": "One append-only JSONL line of the supreme-benchmark routing-evidence store. kind=task|run|score. v1.2 adds commitHash/irVersion provenance binding on run records.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "taskId", "category", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "task" },
+        "taskId": { "type": "string", "minLength": 1 },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "runId", "taskId", "provider", "model", "profile", "startedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "run" },
+        "runId": { "type": "string", "minLength": 1 },
+        "taskId": { "type": "string" },
+        "taskCategory": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "profile": { "type": "string" },
+        "commitHash": {
+          "type": "string",
+          "description": "40-hex upstream commit sha, or UNAVAILABLE when unresolvable.",
+          "oneOf": [{ "const": "UNAVAILABLE" }, { "pattern": "^[a-f0-9]{40}$" }]
+        },
+        "irVersion": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,32}$" },
+        "startedAt": { "type": "number" },
+        "finishedAt": { "type": "number" },
+        "latencyMs": { "type": "number" },
+        "ttftMs": { "type": "number" },
+        "usageIn": { "type": "number" },
+        "usageOut": { "type": "number" },
+        "toolCount": { "type": "number" },
+        "subagentCount": { "type": "number" },
+        "workflowCount": { "type": "number" },
+        "success": { "type": "boolean" },
+        "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "failureClass": {
+          "enum": [
+            "AUTH", "RATE_LIMIT", "QUOTA", "TIMEOUT", "NETWORK", "SERVER",
+            "INVALID_MODEL", "INVALID_SCHEMA", "WRONG_TOOL", "TOOL_EXECUTION",
+            "WRONG_ANSWER", "FORMAT", "CONTEXT", "COST_POLICY", "VERIFICATION", "UNKNOWN"
+          ]
+        },
+        "verification": {
+          "type": "object",
+          "required": ["validatorId", "status"],
+          "properties": {
+            "validatorId": { "type": "string" },
+            "status": { "enum": ["PASS", "FAIL", "ERROR", "UNAVAILABLE"] },
+            "reasonCode": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "runId", "qualityScore", "scoredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "score" },
+        "runId": { "type": "string" },
+        "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "validatorId": { "type": "string" },
+        "scoredAt": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

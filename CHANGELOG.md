@@ -2,6 +2,120 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.2.0 — deterministic enforcement + evidence surface (ECC/v3-review backlog implemented)
+
+Every v1.2 feature binds to a REAL pinned upstream seam, ships with engine
+checks (61/61 Level-A PASS) and boot-level proof (`bun run v12:verify` →
+`V12_E2E_COMPLETE`, 29 assertions through the real CLI install path).
+Zero new plugins (frozen scope honored), zero new runtime deps beyond `yaml`
+(suite-only), upstream still unpatched.
+
+### Added — supreme-policy
+
+- **Unicode taint scanning** (`enableUnicodeSanitization: true`,
+  `logTaintAttempts: true`): deterministic bounded scan of tool arguments for
+  zero-width (U+200B–200F), bidi-isolate (U+2060–206F), bidi-override
+  (U+202A–202E), BOM (U+FEFF) and tag (U+E0000–E007F) codepoints. Audit events
+  carry CLASS NAMES only — values are never echoed.
+- **Taint denial** (`taintPolicy: DENY`): refuses tainted tool calls through
+  the official `tools/pre-execute` seam (`{ kind: 'deny', reason }` — upstream
+  materializes the error result; policy never fabricates tool output). The
+  LOG_ONLY default audits without blocking. Rationale: upstream deep-freezes
+  tool arguments after logging and allows wrappers to change only
+  `exec.signal`, so rewrite-in-place is excluded by the pinned contract —
+  detect→audit→deny is the enforceable posture.
+- **Chain-of-thought presence gate** (`reasoningTracePolicy: OFF|AUDIT|ENFORCE`):
+  tracks per-session reasoning evidence from the pinned `assistant/message`
+  events (reasoning content blocks + reasoning-chunks stream records) and
+  records `cot_missing` audit events; `ENFORCE` additionally denies that
+  session's tool calls. Deterministic audit, NOT prompt injection; unknown
+  evidence is never denied; `ENFORCE` is refused on the CORE floor.
+
+### Added — supreme-router
+
+- **RM0-first routing** (`costFirst: true` default): among eligible
+  candidates, only the cheapest cost class is scored — `FREE_CONFIRMED` beats
+  a rate-limited peer with better benchmark history. Hard-gate evidence for
+  ALL candidates is preserved; `costFirstApplied` + `COST_FIRST_*` reason code
+  recorded on the decision; `false` restores pure weighted scoring.
+- **Deterministic effort pacing** (`effortPacing.enabled`, opt-in): maps cost
+  classes to reasoning effort over the pinned `agent/request` seam
+  (`LlmCallConfig.reasoningEffort` is upstream-overridable). Levels are the
+  pinned DeepSeek adapter set `off/low/high/max`; **escalation fires only on
+  verifier FAIL evidence** (`reportVerifierOutcome()` / `effortFor(...,
+  { verifierFailed })`), never model self-confidence; a recorded PASS
+  recovers. Bounded escalation state (256 keys).
+
+### Added — supreme-workflow-policy
+
+- **Surgical path scope** (`allowedPaths` / `blockedPaths`): zero-dependency
+  deterministic globs (`**` crosses segments; `*`/`?` stay in-segment).
+  `blockedPaths` always win; an empty allowlist is unrestricted.
+- **Verifier-gated close** (`requireVerifierPassOnClose`): HIGH-risk tasks
+  close only with recorded verifier PASS evidence (`canCloseTask` +
+  `closeGate: VERIFIER_PASS_REQUIRED` on workflow decisions). Honest posture
+  for STANDARD where the verifier cannot execute commands.
+
+### Added — supreme-memory-policy
+
+- **Note-Keeping Ledger** (`ledgerEnabled`, opt-in): bounded append-only
+  JSONL note store (`ledgerDir`/`ledgerFileName`/`ledgerMaxEntries`) with
+  admission validation — credential-bearing notes are rejected, corrupt lines
+  counted, memory view trimmed to the newest `maxEntries`.
+- **Instinct-style injection gates** (`minConfidence: 0.7`,
+  `maxInjected: 6`, `relevanceRanking: true`): deterministic confidence gate +
+  hard cap + task-token-overlap ranking (ECC continuous-learning-v2 analogue
+  without ML/ANN). Selected notes flow through the standard secret-excluding
+  memory selection pipeline as `TASK_RELEVANT` items.
+
+### Added — supreme-benchmark
+
+- **Provenance binding**: run records accept `commitHash` (40-hex sha or
+  `UNAVAILABLE`) and `irVersion` (`[A-Za-z0-9._-]{1,32}`); record validation
+  rejects malformed values at `startRun` and on replay.
+
+### Added — suite + evidence surface
+
+- **`src/suite/config-hygiene.ts`** — every shipped YAML config row validated
+  against the plugin's REAL zod Config schema: unknown keys (which zod would
+  silently strip — the trap proven live by `v3:verify`) and value violations
+  are blocking findings. Includes the **pinned-ref scan** (external URL/git
+  references in shipped configs must carry a 40-hex sha or semver tag).
+- **`src/suite/surface-audit.ts`** — six-surface offline security audit
+  (AgentShield analogue): prompts · hooks (all `ctx.on` seams must belong to
+  the official pinned Events map) · mcp (Supreme ships none) · permissions
+  (production configs never enable paid/trial/commands/network/LAB) · secrets
+  (sentinel + credential patterns over artifacts/dist) · agent_files (every
+  delegation scope pins `secretPolicy: 'DENY_ALL'`).
+- **`schemas/`** — published JSON Schemas for the SuiteReport, benchmark
+  records and ledger notes; a schema-contract check keeps them in sync with
+  the runtime (drift = blocking gate). Third parties can validate `suite:json`
+  output.
+- **`real/v12-config-verify.mjs`** (`bun run v12:verify`) — END-TO-END proof
+  of the v1.2 config surface: real CLI install → user patch carrying EVERY
+  v1.2 key → boot → assert every key ARRIVED at its service → functional
+  probes (taint scan, effort escalation via verifier FAIL/recover, path
+  scope, close gate, ledger append→select, observability write-through).
+  Verified: `V12_E2E_COMPLETE`, 29/29 assertions, boot ~0.9 s.
+- **`.github/workflows/ci.yml`** — keyless suite on every push/PR plus a full
+  suite job (clones the pinned upstream, builds via the batched official
+  path, runs 5 real-loader boots). README badges.
+- **`LICENSE`** (MIT) + full package metadata (`repository`, `keywords`
+  incl. `dsh-plugin`, `homepage`, `bugs`) — `private` flag dropped so npm
+  publish becomes possible once an npm token exists (npm mapping requires
+  the repository field, which is now present).
+- **Fix (v1.1 UX wart)**: `bun run suite` from INSIDE `dsh-supreme/` in the
+  monorepo layout no longer fakes `UPSTREAM_CHECKOUT_UNAVAILABLE` — entry-
+  script-based root resolution now precedes the cwd rules.
+
+### Verified status (v1.2)
+
+- Suite: **61/61 Level-A checks, 5/5 real-loader boots, VERDICT COMPLETE**
+  (config hygiene + pinned refs + six-surface audit + schema contract all PASS).
+- E2E: `BUNDLE_E2E_COMPLETE` · `COMPOSITIONS_E2E_COMPLETE` ·
+  `V3_CONFIG_REVIEW_EVIDENCE` · `V12_E2E_COMPLETE` — all green, upstream
+  untouched (`patches=0`).
+
 ## 1.1.0 — dsh.bundle: installable via `dsh plugin add`
 
 ### Added

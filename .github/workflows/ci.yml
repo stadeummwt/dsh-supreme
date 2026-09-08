@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  keyless-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Keyless suite (Level A — deterministic engine checks + config hygiene + six-surface audit + schema contract)
+        run: bun run suite:keyless
+
+  full-suite:
+    # Full suite incl. real-loader boots against the pinned upstream.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm (upstream build toolchain)
+        run: npm i -g pnpm@10
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Clone the pinned DSH upstream (sibling layout)
+        run: |
+          git clone https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+          git -C ../deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+      - name: Build the pinned upstream (memory-batched official build)
+        run: npm run build:upstream
+
+      - name: Bundle plugins to dist/
+        run: |
+          PLUGINS="supreme-policy supreme-observability supreme-benchmark supreme-router supreme-verifier supreme-memory-policy supreme-workflow-policy supreme-minimal-probe supreme-boot-probe supreme-gate-driver supreme-fake-llm"
+          for p in $PLUGINS; do
+            bun build src/plugins/$p/index.ts --outfile dist/plugins/$p/index.mjs --format esm --target node --external zod
+          done
+
+      - name: Full suite (46+ Level-A checks + 5 real-loader boots + security gates)
+        run: bun run suite

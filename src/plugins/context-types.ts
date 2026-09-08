@@ -25,6 +25,9 @@ import type { CredentialProvider } from '@deepseek-ai/dsh-credentials';
 // Compaction merges its log-event vocabulary into SessionEventMap
 // (packages/compaction/compaction/src — declare module '@deepseek-ai/dsh-session/types').
 import type { CompactionEngine } from '@deepseek-ai/dsh-compaction';
+// tools/Events augmentation (tools/pre-execute + tools/execute waterfalls) —
+// v1.2 policy enforcement binds to the pinned PreToolDecision seam.
+import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 
 import type { PolicyService } from './supreme-policy/index';
 import type { ObservabilityService } from './supreme-observability/index';

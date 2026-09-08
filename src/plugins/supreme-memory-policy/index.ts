@@ -15,11 +15,18 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
+import { resolve } from 'node:path';
 import {
+  DEFAULT_INSTINCT_PARAMS,
   NOOP_LONG_TERM_PROVIDER,
+  NoteLedger,
   estimateTokens,
+  ledgerNotesToItems,
   needsMemory,
+  selectLedgerNotes,
   selectMemory,
+  type LedgerNote,
+  type LedgerStats,
   type LongTermProvider,
   type MemoryItem,
   type MemorySelection,
@@ -47,6 +54,19 @@ export const Config = z.object({
       }),
     )
     .default([]),
+  /** v1.2: enable the bounded append-only note ledger (opt-in storage). */
+  ledgerEnabled: z.boolean().default(false),
+  /** v1.2: ledger directory (cwd-relative, like observability dataDir). */
+  ledgerDir: z.string().default('dsh-supreme/data/ledger'),
+  ledgerFileName: z.string().default('ledger.jsonl'),
+  /** v1.2: ledger is bounded — the memory view keeps the newest N entries. */
+  ledgerMaxEntries: z.number().int().min(10).max(10_000).default(500),
+  /** v1.2 instinct params: notes below this confidence never inject. */
+  minConfidence: z.number().min(0).max(1).default(0.7),
+  /** v1.2 instinct params: hard cap on injected notes per selection. */
+  maxInjected: z.number().int().min(1).max(20).default(6),
+  /** v1.2 instinct params: relevance-ranked ordering (deterministic token overlap). */
+  relevanceRanking: z.boolean().default(true),
 });
 
 export type MemoryPolicyService = {
@@ -58,9 +78,15 @@ export type MemoryPolicyService = {
   sessionHistoryOwner(): 'DSH_CTX_SESSIONS';
   registerLongTermProvider(provider: LongTermProvider): () => void;
   longTermProviderState(): ProviderState;
+  /** v1.2: append a note to the bounded ledger (fails when disabled/invalid). */
+  ledgerAppend(note: Omit<LedgerNote, 'createdAt'> & { createdAt?: number }): Promise<{ ok: boolean; reason?: string }>;
+  /** v1.2: deterministic instinct-style note selection (confidence gate + cap + ranking). */
+  ledgerSelect(taskText: string): MemoryItem[];
+  /** v1.2: bounded ledger stats. */
+  ledgerStats(): LedgerStats | null;
 };
 
-export function apply(ctx: Context, config: z.infer<typeof Config>): void {
+export async function apply(ctx: Context, config: z.infer<typeof Config>): Promise<void> {
   // Optional pressure probe — ctx.get() is the no-inject optional pattern.
   const tokenMeter = ctx.get('tokenMeter') as
     | { measure(session: unknown): { totalTokens: number } }
@@ -68,6 +94,41 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
 
   let longTerm: LongTermProvider = NOOP_LONG_TERM_PROVIDER;
   let latestSelection: MemorySelection | null = null;
+
+  // v1.2: opt-in bounded note ledger. Disabled ⇒ pure selection policy (NOOP).
+  let ledger: NoteLedger | null = null;
+  if (config.ledgerEnabled) {
+    const fs = process.getBuiltinModule('node:fs').promises;
+    const ledgerPath = resolve(config.ledgerDir, config.ledgerFileName);
+    ledger = new NoteLedger(
+      ledgerPath,
+      {
+        readFile: async (p) => {
+          try {
+            return await fs.readFile(p, 'utf8');
+          } catch {
+            return null;
+          }
+        },
+        appendFile: (p, line) => fs.appendFile(p, line, 'utf8'),
+        mkdir: (dir) => fs.mkdir(dir, { recursive: true }).then(() => undefined),
+      },
+      config.ledgerMaxEntries,
+    );
+    await ledger.init();
+    ctx.logger.info('supreme-memory-policy ledger at %s (%d entries)', ledgerPath, ledger.stats().entries);
+  }
+
+  const instinctParams = {
+    minConfidence: config.minConfidence,
+    maxInjected: config.maxInjected,
+    relevanceRanking: config.relevanceRanking,
+  };
+
+  const ledgerItemsForTask = (taskText: string): MemoryItem[] => {
+    if (!ledger) return [];
+    return ledgerNotesToItems(selectLedgerNotes(ledger.list(), taskText, instinctParams));
+  };
 
   const projectItems = (): MemoryItem[] =>
     config.projectKnowledge.map((entry) => ({
@@ -83,7 +144,7 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
   const service: MemoryPolicyService = {
     select(input) {
       const budget = input.budgetTokens ?? config.defaultBudgetTokens;
-      const items = [...projectItems(), ...longTerm.list({ taskText: input.taskText, limit: 50 })];
+      const items = [...projectItems(), ...ledgerItemsForTask(input.taskText), ...longTerm.list({ taskText: input.taskText, limit: 50 })];
       const decision = needsMemory({ taskText: input.taskText });
       if (!decision.required) {
         const empty: MemorySelection = {
@@ -122,9 +183,22 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     },
 
     longTermProviderState: () => longTerm.status,
+
+    async ledgerAppend(note) {
+      if (!ledger) return { ok: false, reason: 'LEDGER_DISABLED' };
+      const accepted = await ledger.append({ ...note, createdAt: note.createdAt ?? Date.now() });
+      return accepted ? { ok: true } : { ok: false, reason: 'LEDGER_NOTE_REJECTED' };
+    },
+
+    ledgerSelect: (taskText) => ledgerItemsForTask(taskText),
+
+    ledgerStats: () => ledger?.stats() ?? null,
   };
 
   ctx.provide('supremeMemoryPolicy', Object.freeze(service));
+  if (ledger) {
+    ctx.effect(() => () => ledger?.flush(), 'supreme-memory-policy.ledger-flush');
+  }
 
   if (config.registerPromptSection) {
     // Conditional section: renders '' when no memory was selected for the
@@ -143,10 +217,14 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
   }
 
   ctx.logger.info(
-    'supreme-memory-policy active (budget=%d, knowledge=%d, longTerm=%s/%s)',
+    'supreme-memory-policy active (budget=%d, knowledge=%d, longTerm=%s/%s, ledger=%s, instinct[minConfidence=%s maxInjected=%d relevanceRanking=%s])',
     config.defaultBudgetTokens,
     config.projectKnowledge.length,
     longTerm.name,
     longTerm.status,
+    config.ledgerEnabled ? 'on' : 'off',
+    String(config.minConfidence),
+    config.maxInjected,
+    String(config.relevanceRanking),
   );
 }

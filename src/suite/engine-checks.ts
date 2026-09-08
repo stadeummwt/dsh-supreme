@@ -12,7 +12,9 @@ import {
 import {
   evaluateDelegationPolicy,
   evaluateRoutePolicy,
+  evaluateCoTGate,
   executionPolicySummary,
+  inspectTaint,
   PRODUCTION_DEFAULTS,
   validatePolicyConfig,
   PolicyConfigError,
@@ -34,7 +36,11 @@ import {
 } from '../plugins/supreme-benchmark/engine';
 import {
   CircuitBreaker,
+  baseEffortFor,
+  costClassRank,
+  DEFAULT_EFFORT_PACING,
   DEFAULT_ROUTER_CONFIG,
+  escalateEffort,
   selectRoute,
   weightsAreNormalized,
   type RouterCandidate,
@@ -49,14 +55,25 @@ import {
 import {
   estimateTokens,
   isSecretBearing,
+  ledgerNotesToItems,
+  ledgerRelevanceScore,
   needsMemory,
+  NoteLedger,
   NOOP_LONG_TERM_PROVIDER,
+  selectLedgerNotes,
   selectMemory,
+  validateLedgerNote,
+  LedgerValidationError,
+  type LedgerFs,
+  type LedgerNote,
   type MemoryItem,
 } from '../plugins/supreme-memory-policy/engine';
 import {
   buildDelegationScope,
+  canCloseTask,
   decideWorkflow,
+  evaluatePathScope,
+  pathMatchesGlob,
   validateWorkflowLimits,
   WORKFLOW_LIMIT_DEFAULTS,
   WorkflowConfigError,
@@ -150,6 +167,36 @@ export function policyChecks(): Check[] {
       expectEqual(summary.paidRoutes, 'DENY', 'summary paid routes');
       expectEqual(summary.unknownCost, 'DENY', 'summary unknown cost');
     }),
+    check('policy.taint-scan-detects', 'hidden/bidi unicode in tool arguments is detected deterministically', () => {
+      const tainted = inspectTaint({ command: 'echo', message: 'ok\u200Bhidden', deep: { bidi: 'a\u202Eb' } });
+      expectTrue(tainted.tainted, 'taint found');
+      expectTrue(tainted.hits.includes('U+200B-U+200F'), 'zero-width class reported');
+      expectTrue(tainted.hits.includes('U+202A-U+202E'), 'bidi class reported');
+      expectTrue(tainted.count >= 2, `count=${tainted.count}`);
+      const clean = inspectTaint({ command: 'echo', message: 'plain ascii' });
+      expectTrue(!clean.tainted && clean.hits.length === 0, 'clean args pass');
+      // Values are NEVER echoed — only class names.
+      expectTrue(!JSON.stringify(tainted.hits).includes('hidden'), 'values never reported');
+    }),
+    check('policy.taint-config-validation', 'taint/cot keys validate; unknown values rejected', () => {
+      const deny = validatePolicyConfig({ ...prodConfig(), taintPolicy: 'DENY' });
+      expectEqual(deny.taintPolicy, 'DENY', 'DENY accepted');
+      const cot = validatePolicyConfig({ ...prodConfig({ executionClass: 'SUPREME' }), reasoningTracePolicy: 'ENFORCE' });
+      expectEqual(cot.reasoningTracePolicy, 'ENFORCE', 'ENFORCE accepted on SUPREME');
+      expectThrows(() => validatePolicyConfig({ ...prodConfig(), taintPolicy: 'BOGUS' as never }), 'bad taintPolicy rejected');
+      expectThrows(
+        () => validatePolicyConfig({ ...prodConfig({ executionClass: 'CORE' }), reasoningTracePolicy: 'ENFORCE' as never }),
+        'ENFORCE refused on CORE floor',
+      );
+      expectTrue(PolicyConfigError !== undefined, 'error type present');
+    }),
+    check('policy.cot-gate-matrix', 'CoT presence gate is deterministic (audit, never prompt injection)', () => {
+      expectEqual(evaluateCoTGate('OFF', { reasoningTracePresent: false, tool: 'bash' }).decision, 'ALLOW', 'OFF allows');
+      expectEqual(evaluateCoTGate('AUDIT', { reasoningTracePresent: false, tool: 'bash' }).decision, 'AUDIT', 'AUDIT on absence');
+      expectEqual(evaluateCoTGate('ENFORCE', { reasoningTracePresent: false, tool: 'bash' }).decision, 'DENY', 'ENFORCE denies known absence');
+      expectEqual(evaluateCoTGate('ENFORCE', { reasoningTracePresent: undefined, tool: 'bash' }).decision, 'AUDIT', 'unknown evidence never denied');
+      expectEqual(evaluateCoTGate('ENFORCE', { reasoningTracePresent: true, tool: 'bash' }).decision, 'ALLOW', 'trace present allows');
+    }),
   ];
 }
 
@@ -189,6 +236,20 @@ export function observabilityChecks(): Check[] {
       const a = buildRecord(10, 1000, 'a', {}) as SafeRecord;
       const b = buildRecord(11, 1001, 'b', {}) as SafeRecord;
       expectTrue(a.seq < b.seq, 'seq order');
+    }),
+    check('observability.v12-events-allowlisted', 'v1.2 audit events (taint/cot) serialize metadata only', () => {
+      const taint = buildRecord(20, 1000, 'taint_detected', {
+        tool: 'bash',
+        detail: 'classes:U+200B-U+200F;count:1',
+        // Injection attempts: unknown fields + values must be dropped.
+        arguments: 'rm -rf /\u200B',
+        SECRET_SENTINEL_X: 'leak',
+      }) as Record<string, unknown>;
+      expectEqual(taint.event, 'taint_detected', 'event kept');
+      expectEqual(taint.tool, 'bash', 'allowlisted tool field');
+      expectTrue(!('arguments' in taint) && !('SECRET_SENTINEL_X' in taint), 'unknown fields dropped');
+      const cot = buildRecord(21, 1000, 'cot_missing', { tool: 'bash', detail: 'ENFORCE' }) as Record<string, unknown>;
+      expectEqual(cot.detail, 'ENFORCE', 'cot detail kept');
     }),
   ];
 }
@@ -243,6 +304,25 @@ export function benchmarkChecks(): Check[] {
     }),
     check('benchmark.empty-history', 'empty history aggregation is empty, not crash', () => {
       expectEqual(aggregateRuns([]).length, 0, 'empty groups');
+    }),
+    check('benchmark.provenance-binding', 'commitHash + irVersion bind runs to provenance; malformed rejected', () => {
+      expectThrows(
+        () => validateBenchmarkRecord({ kind: 'run', schemaVersion: 1, runId: 'x', taskId: 't', provider: 'p', model: 'm', startedAt: 0, commitHash: 'not-a-sha' }),
+        'malformed commitHash rejected',
+      );
+      expectThrows(
+        () => validateBenchmarkRecord({ kind: 'run', schemaVersion: 1, runId: 'x', taskId: 't', provider: 'p', model: 'm', startedAt: 0, irVersion: 'bad version!' }),
+        'malformed irVersion rejected',
+      );
+      const ok = validateBenchmarkRecord({
+        kind: 'run', schemaVersion: 1, runId: 'p1', taskId: 't', provider: 'p', model: 'm', profile: 'unit',
+        startedAt: 1,
+        commitHash: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
+        irVersion: '1.0.0',
+      });
+      expectEqual((ok as { commitHash?: string }).commitHash, 'd347e703908d0406b7a7ef80e3a0e594d86b2215', 'sha roundtrip');
+      const unavailable = validateBenchmarkRecord({ kind: 'run', schemaVersion: 1, runId: 'x', taskId: 't', provider: 'p', model: 'm', startedAt: 0, commitHash: 'UNAVAILABLE' });
+      expectEqual((unavailable as { commitHash?: string }).commitHash, 'UNAVAILABLE', 'UNAVAILABLE accepted');
     }),
   ];
 }
@@ -326,6 +406,45 @@ export function routerChecks(): Check[] {
       const decision = runSelect([freeCandidate()]);
       expectTrue(decision.degraded, 'degraded in exploration');
       expectTrue(decision.reasonCodes.includes('EXPLORATION_NO_HISTORY'), 'exploration reason');
+    }),
+    check('router.cost-first-rm0', 'RM0-first: FREE_CONFIRMED wins even when rate-limited peer has better history', () => {
+      const limited = freeCandidate({
+        key: 'limited::m',
+        provider: 'limited',
+        model: 'm',
+        costClass: 'FREE_LIMITED',
+        failureDomain: 'limited',
+      });
+      const decision = runSelect([limited, freeCandidate()], {
+        perf: new Map([['limited::m', { avgQuality: 0.95, samples: 20 }]]),
+      });
+      expectEqual(decision.blocked, null, 'not blocked');
+      expectEqual(decision.provider, 'synthetic-free', 'FREE_CONFIRMED selected despite worse score');
+      expectTrue(decision.costFirstApplied, 'cost-first recorded');
+      expectTrue(decision.reasonCodes.some((r) => r.startsWith('COST_FIRST_FREE_CONFIRMED')), 'reason code present');
+      // Hard-gate evidence for the demoted candidate is preserved.
+      expectTrue(decision.hardGates.some((g) => g.candidate === 'limited::m' && g.passed), 'demoted candidate gates recorded');
+      expectEqual(costClassRank('FREE_CONFIRMED'), 0, 'rank order start');
+      expectTrue(costClassRank('FREE_LIMITED') > costClassRank('FREE_CONFIRMED'), 'limited ranks below confirmed');
+    }),
+    check('router.cost-first-opt-out', 'costFirst=false restores pure weighted scoring', () => {
+      const limited = freeCandidate({ key: 'limited::m', provider: 'limited', model: 'm', costClass: 'FREE_LIMITED', failureDomain: 'limited' });
+      const decision = runSelect([limited, freeCandidate()], {
+        config: { ...DEFAULT_ROUTER_CONFIG, costFirst: false },
+        perf: new Map([['limited::m', { avgQuality: 0.95, samples: 20 }]]),
+      });
+      expectEqual(decision.blocked, null, 'not blocked');
+      expectEqual(decision.provider, 'limited', 'best-scored candidate wins when opt-out');
+      expectTrue(!decision.costFirstApplied, 'cost-first not applied');
+    }),
+    check('router.effort-pacing-deterministic', 'effort pacing maps cost classes and escalates only on verifier FAIL', () => {
+      // Pinned DeepSeek adapter level set: off | low | high | max.
+      expectEqual(baseEffortFor({ ...DEFAULT_EFFORT_PACING, enabled: true }, 'FREE_CONFIRMED'), 'low', 'free → low');
+      expectEqual(baseEffortFor({ ...DEFAULT_EFFORT_PACING, enabled: true }, 'PAID'), 'high', 'paid → high');
+      expectEqual(baseEffortFor(DEFAULT_EFFORT_PACING, 'FREE_CONFIRMED'), undefined, 'disabled → untouched');
+      expectEqual(escalateEffort('low'), 'high', 'one-step escalation');
+      expectEqual(escalateEffort('max'), 'max', 'max is terminal');
+      expectEqual(escalateEffort('off'), 'low', 'off escalates to low');
     }),
   ];
 }
@@ -433,6 +552,77 @@ export function memoryChecks(): Check[] {
       expectTrue(needsMemory({ taskText: 'plan the work', tokenPressure: 0.2 }).required, 'normal task → memory');
       expectTrue(estimateTokens('abcd') === 1, 'estimate fn');
     }),
+    check('memory.ledger-roundtrip-bounded', 'note ledger: append → init → trim to maxEntries', async () => {
+      const files = new Map<string, string>();
+      const fs: LedgerFs = {
+        readFile: async (p) => files.get(p) ?? null,
+        appendFile: async (p, line) => {
+          files.set(p, (files.get(p) ?? '') + line);
+        },
+        mkdir: async () => {},
+      };
+      const ledger = new NoteLedger('/mem/ledger.jsonl', fs, 3);
+      await ledger.init();
+      for (let i = 0; i < 5; i++) {
+        const ok = await ledger.append({ id: `n${i}`, text: `note ${i}`, tags: [], priority: 50, confidence: 0.9, createdAt: 1000 + i, source: 'unit' });
+        expectTrue(ok, `note ${i} accepted`);
+      }
+      expectEqual(ledger.stats().entries, 3, 'memory view trimmed to maxEntries (newest kept)');
+      // Reload from the append-only file: same bounded view, no crash.
+      const reloaded = new NoteLedger('/mem/ledger.jsonl', fs, 3);
+      const stats = await reloaded.init();
+      expectEqual(stats.entries, 3, 'reload bounded');
+      expectTrue(reloaded.list()[2].id === 'n4', 'newest notes kept');
+    }),
+    check('memory.ledger-validation', 'ledger notes validated; credential-bearing rejected at admission', () => {
+      expectThrows(() => validateLedgerNote({ id: 'x', text: 't', tags: [], priority: 50, confidence: 1.5, createdAt: 1, source: 's' }), 'confidence >1 rejected');
+      expectThrows(
+        () => validateLedgerNote({ id: 'x', text: 'api key: sk-abcdef1234567890', tags: [], priority: 50, confidence: 0.9, createdAt: 1, source: 's' }),
+        'secret-bearing note rejected',
+      );
+      const ok = validateLedgerNote({ id: 'ok', text: 'deterministic note', tags: ['t'], priority: 10, confidence: 0.8, createdAt: 5, source: 'unit' });
+      expectEqual(ok.id, 'ok', 'valid note accepted');
+      expectTrue(LedgerValidationError !== undefined, 'error type present');
+    }),
+    check('memory.instinct-gates', 'instinct params: confidence gate + maxInjected cap + relevance ranking', () => {
+      const notes: LedgerNote[] = [
+        { id: 'low-conf', text: 'router scoring weights', tags: ['router'], priority: 90, confidence: 0.5, createdAt: 3, source: 'unit' },
+        { id: 'relevant', text: 'cost-first routing prefers free models', tags: ['router', 'cost'], priority: 40, confidence: 0.9, createdAt: 2, source: 'unit' },
+        { id: 'high-prio', text: 'unrelated note about tests', tags: ['tests'], priority: 95, confidence: 0.9, createdAt: 1, source: 'unit' },
+      ];
+      // Confidence gate: 0.5 < 0.7 never injects.
+      const gated = selectLedgerNotes(notes, 'fix the router scoring', { minConfidence: 0.7, maxInjected: 6, relevanceRanking: true });
+      expectTrue(!gated.some((n) => n.id === 'low-conf'), 'below-threshold note excluded');
+      // Relevance ranking: task-matching note outranks higher-priority unrelated one.
+      expectEqual(gated[0].id, 'relevant', 'relevance first');
+      // Ranking disabled → priority order restored.
+      const priorityOrder = selectLedgerNotes(notes, 'fix the router scoring', { minConfidence: 0.7, maxInjected: 6, relevanceRanking: false });
+      expectEqual(priorityOrder[0].id, 'high-prio', 'priority order without ranking');
+      // Cap: maxInjected=1 keeps only the best.
+      const capped = selectLedgerNotes(notes, 'fix the router scoring', { minConfidence: 0.7, maxInjected: 1, relevanceRanking: true });
+      expectEqual(capped.length, 1, 'cap enforced');
+      expectEqual(capped[0].id, 'relevant', 'cap keeps the best');
+      // Projection into the memory pipeline keeps secret exclusion semantics.
+      const items = ledgerNotesToItems(gated);
+      expectTrue(items.every((i) => i.id.startsWith('ledger:')), 'projected with ledger ids');
+      expectTrue(ledgerRelevanceScore(notes[1], new Set(['router', 'cost', 'fix'])) > 0, 'relevance score positive');
+    }),
+    check('memory.ledger-append-rejects-garbage', 'append counts invalid notes instead of throwing', async () => {
+      const files = new Map<string, string>();
+      const fs: LedgerFs = {
+        readFile: async (p) => files.get(p) ?? null,
+        appendFile: async (p, line) => {
+          files.set(p, (files.get(p) ?? '') + line);
+        },
+        mkdir: async () => {},
+      };
+      const ledger = new NoteLedger('/mem/ledger2.jsonl', fs, 10);
+      await ledger.init();
+      const bad = await ledger.append({ id: 'bad', text: 'x', tags: [], priority: 50, confidence: 9, createdAt: 1, source: 'unit' });
+      expectTrue(!bad, 'invalid note rejected');
+      expectEqual(ledger.stats().rejected, 1, 'rejection counted');
+      expectEqual(ledger.stats().entries, 0, 'nothing stored');
+    }),
   ];
 }
 
@@ -510,6 +700,34 @@ export function workflowChecks(): Check[] {
           }),
         'non-DENY_ALL rejected',
       );
+    }),
+    check('workflow.path-scope-surgical', 'surgical path scope: blocked wins, globs deterministic', () => {
+      expectTrue(pathMatchesGlob('src/app/main.ts', 'src/**/*.ts'), '** crosses segments');
+      expectTrue(pathMatchesGlob('src/main.ts', 'src/*.ts'), '* stays in segment');
+      expectTrue(!pathMatchesGlob('src/a/b.ts', 'src/*.ts'), '* does not cross segments');
+      expectTrue(pathMatchesGlob('src/a1.ts', 'src/a?.ts'), '? matches one char');
+      const limits = { allowedPaths: ['src/**', 'docs/*.md'], blockedPaths: ['**/secrets/**', 'src/vault.ts'] };
+      expectEqual(evaluatePathScope(limits, 'src/app/x.ts').reasonCode, 'PATH_ALLOWED', 'inside allowlist');
+      expectEqual(evaluatePathScope(limits, 'README.md').reasonCode, 'PATH_OUTSIDE_ALLOWED', 'outside allowlist');
+      const blocked = evaluatePathScope(limits, 'src/vault.ts');
+      expectTrue(!blocked.allowed && blocked.reasonCode === 'PATH_BLOCKED', 'blocked wins over allowed');
+      expectEqual(evaluatePathScope(limits, 'config/secrets/key.pem').reasonCode, 'PATH_BLOCKED', 'secrets glob blocked');
+      expectEqual(evaluatePathScope({ allowedPaths: [], blockedPaths: [] }, 'anything').reasonCode, 'NO_PATH_RULES', 'no rules = unrestricted');
+    }),
+    check('workflow.close-gate-verifier', 'requireVerifierPassOnClose: HIGH risk closes only on verifier PASS', () => {
+      const limits = { requireVerifierPassOnClose: true };
+      expectTrue(!canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'FAIL' }).closable, 'FAIL blocks close');
+      expectTrue(!canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'MISSING' }).closable, 'MISSING evidence blocks close');
+      expectTrue(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS' }).closable, 'PASS closes');
+      expectTrue(canCloseTask(limits, { risk: 'LOW', verifierStatus: 'MISSING' }).closable, 'LOW risk unrestricted');
+      expectTrue(canCloseTask({ requireVerifierPassOnClose: false }, { risk: 'HIGH', verifierStatus: 'FAIL' }).closable, 'disabled → unrestricted');
+    }),
+    check('workflow.close-gate-in-decision', 'decideWorkflow stamps the close gate for HIGH-risk tasks', () => {
+      const limits = validateWorkflowLimits({ ...WORKFLOW_LIMIT_DEFAULTS, requireVerifierPassOnClose: true });
+      const high = decideWorkflow(limits, { ...baseInput, complexity: 'complex', parallelizable: true, risk: 'HIGH' });
+      expectEqual(high.closeGate, 'VERIFIER_PASS_REQUIRED', 'HIGH task requires verifier pass to close');
+      const low = decideWorkflow(limits, baseInput);
+      expectEqual(low.closeGate, 'NONE', 'LOW task closes freely');
     }),
   ];
 }

@@ -15,9 +15,14 @@ import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
 import {
   buildDelegationScope,
+  canCloseTask,
   decideWorkflow,
+  evaluatePathScope,
   validateWorkflowLimits,
+  type CloseDecision,
+  type CloseVerifierStatus,
   type DelegationScope,
+  type PathScopeDecision,
   type WorkflowDecisionInput,
   type WorkflowDecisionResult,
   type WorkflowLimitsConfig,
@@ -34,12 +39,22 @@ export const Config = z.object({
   workflowTimeoutMs: z.number().int().min(1000).default(600_000),
   subagentTimeoutMs: z.number().int().min(1000).default(120_000),
   allowedSubagentProviders: z.array(z.string()).default(['in-process']),
+  /** v1.2: surgical scope — delegation paths must match these globs (empty = no allowlist). */
+  allowedPaths: z.array(z.string().min(1).max(512)).default([]),
+  /** v1.2: surgical scope — paths matching these globs are always refused (wins). */
+  blockedPaths: z.array(z.string().min(1).max(512)).default([]),
+  /** v1.2: HIGH-risk tasks close only with recorded verifier PASS evidence. */
+  requireVerifierPassOnClose: z.boolean().default(false),
 });
 
 export type WorkflowPolicyService = {
   decide(input: WorkflowDecisionInput): WorkflowDecisionResult;
   buildDelegationScope(scope: DelegationScope): Readonly<DelegationScope>;
   limits(): WorkflowLimitsConfig;
+  /** v1.2: deterministic surgical path scope (blockedPaths win). */
+  evaluatePathScope(path: string): PathScopeDecision;
+  /** v1.2: deterministic verifier-gated close decision. */
+  canCloseTask(input: { risk: 'LOW' | 'MEDIUM' | 'HIGH'; verifierStatus: CloseVerifierStatus }): CloseDecision;
 };
 
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
@@ -51,12 +66,14 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
       const result = decideWorkflow(limits, input);
       observability.record('workflow_decision', {
         workflowDecisionId: genId('wfdec'),
-        detail: `${result.decision}${result.degradedFrom ? `:from:${result.degradedFrom}` : ''}`,
+        detail: `${result.decision}${result.degradedFrom ? `:from:${result.degradedFrom}` : ''}:${result.closeGate}`,
       });
       return result;
     },
     buildDelegationScope: (scope) => buildDelegationScope(scope),
     limits: () => limits,
+    evaluatePathScope: (path) => evaluatePathScope(limits, path),
+    canCloseTask: (input) => canCloseTask(limits, input),
   };
 
   ctx.provide('supremeWorkflowPolicy', Object.freeze(service));

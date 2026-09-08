@@ -16,10 +16,14 @@ import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
 import {
   CircuitBreaker,
+  baseEffortFor,
+  escalateEffort,
   selectRoute,
   type CandidateModelPerf,
   type CircuitConfig,
+  type EffortPacingConfig,
   type HealthState,
+  type ReasoningEffortLevel,
   type RouteDecision,
   type RouterCandidate,
   type RouterConfig,
@@ -76,6 +80,24 @@ export const Config = z.object({
       cooldownMs: z.number().int().min(0).default(60_000),
     })
     .default({ failureThreshold: 3, windowMs: 300_000, cooldownMs: 60_000 }),
+  /** v1.2: RM0-first — score only the cheapest eligible cost class (policy gates still run first). */
+  costFirst: z.boolean().default(true),
+  /**
+   * v1.2: deterministic reasoning-effort pacing over the agent/request seam.
+   * Levels are the PINNED DeepSeek adapter set: off | low | high | max
+   * (anything else is rejected upstream with UNSUPPORTED_REASONING_EFFORT).
+   * Escalation fires ONLY on verifier FAIL evidence (mechanical, never model
+   * self-confidence). disabled by default — opt-in pacing.
+   */
+  effortPacing: z
+    .object({
+      enabled: z.boolean().default(false),
+      byCostClass: z
+        .record(z.string(), z.enum(['off', 'low', 'high', 'max']))
+        .default({ FREE_CONFIRMED: 'low', FREE_LIMITED: 'low', TRIAL: 'high', PAID: 'high', UNKNOWN: 'high' }),
+      escalateOnVerifierFail: z.boolean().default(true),
+    })
+    .default({ enabled: false, byCostClass: { FREE_CONFIRMED: 'low', FREE_LIMITED: 'low', TRIAL: 'high', PAID: 'high', UNKNOWN: 'high' }, escalateOnVerifierFail: true }),
 });
 
 interface ResolvedCandidateConfig {
@@ -117,6 +139,10 @@ export type RouterService = {
   recordOutcome(input: { provider: string; model: string; success: boolean; failureClass?: string }): void;
   healthSnapshot(): Array<{ key: string; state: HealthState; recentFailures: number }>;
   config(): RouterConfig;
+  /** v1.2: deterministic effort for a candidate route (undefined = leave adapter default). */
+  effortFor(input: { provider: string; model: string; verifierFailed?: boolean }): ReasoningEffortLevel | undefined;
+  /** v1.2: feed mechanical verifier evidence; FAIL escalates effort until a PASS. */
+  reportVerifierOutcome(input: { provider: string; model: string; passed: boolean }): void;
 };
 
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
@@ -133,10 +159,25 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     latencyCeilingMs: config.latencyCeilingMs,
     minQuotaHeadroom: config.minQuotaHeadroom,
     circuit: config.circuit as CircuitConfig,
+    costFirst: config.costFirst,
+  };
+  const effortPacing: EffortPacingConfig = {
+    enabled: config.effortPacing.enabled,
+    byCostClass: { ...config.effortPacing.byCostClass },
+    escalateOnVerifierFail: config.effortPacing.escalateOnVerifierFail,
   };
   const circuit = new CircuitBreaker(routerConfig.circuit);
   const candidatesConfig = config.candidates as ResolvedCandidateConfig[];
   const context = ctx as Context & RouterDeps;
+
+  // provider::model → costClass (drives deterministic effort pacing).
+  const costClassByKey = new Map<string, string>();
+  for (const entry of candidatesConfig) {
+    for (const model of entry.models) costClassByKey.set(`${entry.provider}::${model.model}`, model.costClass);
+  }
+  // Mechanical verifier-failure escalation state (bounded).
+  const escalatedKeys = new Set<string>();
+  const ESCALATION_LIMIT = 256;
 
   async function credentialConfiguredFor(entry: ResolvedCandidateConfig): Promise<boolean> {
     if (entry.credentialMode === 'config-owned') return entry.credentialConfigured;
@@ -243,11 +284,66 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
       return [...keys].map((key) => circuit.stateOf(key, now));
     },
 
+    effortFor({ provider, model, verifierFailed }) {
+      const costClass = costClassByKey.get(`${provider}::${model}`);
+      if (costClass === undefined) return undefined;
+      const base = baseEffortFor(effortPacing, costClass);
+      if (base === undefined) return undefined;
+      // Reflect the exact state the agent/request waterfall would apply:
+      // either an explicit verifierFailed signal or recorded FAIL evidence.
+      const key = `${provider}::${model}`;
+      const escalated =
+        effortPacing.escalateOnVerifierFail && (verifierFailed === true || escalatedKeys.has(key));
+      return escalated ? escalateEffort(base) : base;
+    },
+
+    reportVerifierOutcome({ provider, model, passed }) {
+      if (!effortPacing.enabled || !effortPacing.escalateOnVerifierFail) return;
+      const key = `${provider}::${model}`;
+      if (passed) {
+        escalatedKeys.delete(key);
+        return;
+      }
+      if (escalatedKeys.size >= ESCALATION_LIMIT && !escalatedKeys.has(key)) {
+        // Bounded: drop the oldest escalation (insertion order is deterministic).
+        const oldest = escalatedKeys.values().next().value;
+        if (oldest !== undefined) escalatedKeys.delete(oldest);
+      }
+      escalatedKeys.add(key);
+    },
+
     config: () => routerConfig,
   };
 
   ctx.provide('supremeRouter', Object.freeze(service));
-  ctx.logger.info('supreme-router active with %d configured candidates', candidatesConfig.length);
+
+  // --- v1.2: agent/request effort pacing (pinned LlmCallConfig seam) -------
+  // "agent/request may override it" (upstream agent-loop contract): we rewrite
+  // ONLY reasoningEffort on the proposed config; provider/model stay untouched.
+  ctx.on('agent/request', async (_payload, next) => {
+    const call = await next();
+    if (!effortPacing.enabled) return call;
+    const costClass = costClassByKey.get(`${call.provider}::${call.model}`);
+    if (costClass === undefined) return call;
+    const base = baseEffortFor(effortPacing, costClass);
+    if (base === undefined) return call;
+    const escalated = effortPacing.escalateOnVerifierFail && escalatedKeys.has(`${call.provider}::${call.model}`);
+    const effort = escalated ? escalateEffort(base) : base;
+    if (call.reasoningEffort === effort) return call;
+    deps.supremeObservability.record('effort_pacing', {
+      provider: call.provider,
+      model: call.model,
+      detail: `${call.reasoningEffort ?? 'adapter-default'}->${effort}${escalated ? ':escalated' : ''}`,
+    });
+    return { ...call, reasoningEffort: effort };
+  });
+
+  ctx.logger.info(
+    'supreme-router active with %d configured candidates (costFirst=%s effortPacing=%s)',
+    candidatesConfig.length,
+    String(routerConfig.costFirst),
+    String(effortPacing.enabled),
+  );
 }
 
 function genId(prefix: string): string {

@@ -107,6 +107,8 @@ export interface RouteDecision {
   degraded: boolean;
   alternatives: RouteAlternative[];
   weightsUsed: ScoreWeights;
+  /** v1.2: RM0-first rule narrowed the scoring set (evidence preserved for all). */
+  costFirstApplied: boolean;
 }
 
 export interface CircuitConfig {
@@ -210,6 +212,67 @@ export interface RouterConfig {
   latencyCeilingMs: number;
   minQuotaHeadroom: number;
   circuit: CircuitConfig;
+  /** v1.2: RM0-first — among eligible candidates, score only the cheapest cost class. */
+  costFirst: boolean;
+}
+
+/** v1.2: cheapest-first order (rank 0 = truly free). Policy still gates hard before this. */
+export const COST_CLASS_ORDER = ['FREE_CONFIRMED', 'FREE_LIMITED', 'TRIAL', 'PAID', 'UNKNOWN'] as const;
+
+export function costClassRank(costClass: string): number {
+  const idx = (COST_CLASS_ORDER as readonly string[]).indexOf(costClass);
+  return idx >= 0 ? idx : COST_CLASS_ORDER.length;
+}
+
+// ---------------------------------------------------------------------------
+// v1.2 — Deterministic reasoning-effort pacing (v3 plan §3B).
+//
+// Valid levels are the PINNED DeepSeek adapter set ('off' | 'low' | 'high' |
+// 'max' — packages/llm/llm-deepseek/src/serialize.ts); anything else is
+// rejected upstream with UNSUPPORTED_REASONING_EFFORT. Escalation is driven
+// ONLY by verifier FAIL evidence (mechanical), never model self-confidence.
+// ---------------------------------------------------------------------------
+
+export const REASONING_EFFORT_LEVELS = ['off', 'low', 'high', 'max'] as const;
+export type ReasoningEffortLevel = (typeof REASONING_EFFORT_LEVELS)[number];
+
+export interface EffortPacingConfig {
+  enabled: boolean;
+  byCostClass: Record<string, ReasoningEffortLevel>;
+  escalateOnVerifierFail: boolean;
+}
+
+export const DEFAULT_EFFORT_PACING: Readonly<EffortPacingConfig> = Object.freeze({
+  enabled: false,
+  byCostClass: Object.freeze({
+    FREE_CONFIRMED: 'low',
+    FREE_LIMITED: 'low',
+    TRIAL: 'high',
+    PAID: 'high',
+    UNKNOWN: 'high',
+  }),
+  escalateOnVerifierFail: true,
+});
+
+/** Base effort for a cost class; undefined leaves the adapter default untouched. */
+export function baseEffortFor(pacing: EffortPacingConfig, costClass: string): ReasoningEffortLevel | undefined {
+  if (!pacing.enabled) return undefined;
+  return pacing.byCostClass[costClass];
+}
+
+/** One-step mechanical escalation (low→high after verifier FAIL; max is terminal). */
+export function escalateEffort(effort: ReasoningEffortLevel): ReasoningEffortLevel {
+  switch (effort) {
+    case 'off':
+      return 'low';
+    case 'low':
+      return 'high';
+    case 'high':
+    case 'max':
+      return 'max';
+    default:
+      return 'high';
+  }
 }
 
 export const DEFAULT_ROUTER_CONFIG: Readonly<RouterConfig> = Object.freeze({
@@ -218,6 +281,7 @@ export const DEFAULT_ROUTER_CONFIG: Readonly<RouterConfig> = Object.freeze({
   latencyCeilingMs: 30_000,
   minQuotaHeadroom: 0.05,
   circuit: { ...DEFAULT_CIRCUIT },
+  costFirst: true,
 });
 
 const HEALTH_SCORE: Partial<Record<HealthState, number>> = {
@@ -304,19 +368,35 @@ export function selectRoute(deps: SelectRouteDeps): RouteDecision {
       degraded: false,
       alternatives: [],
       weightsUsed: weights,
+      costFirstApplied: false,
     };
   }
 
-  // Failure-domain diversity input: share of eligible candidates per domain.
+  // v1.2 RM0-first: score only the cheapest cost class among eligible
+  // candidates. Hard-gate evidence for ALL candidates is preserved above; the
+  // filter can never empty the set (the minimum rank is always present).
+  let scoringSet = eligible;
+  let costFirstApplied = false;
+  if (config.costFirst && eligible.length > 1) {
+    const cheapestRank = Math.min(...eligible.map((c) => costClassRank(c.costClass)));
+    const narrowed = eligible.filter((c) => costClassRank(c.costClass) === cheapestRank);
+    if (narrowed.length > 0 && narrowed.length < eligible.length) {
+      scoringSet = narrowed;
+      costFirstApplied = true;
+      reasonCodes.push(`COST_FIRST_${COST_CLASS_ORDER[cheapestRank]}`);
+    }
+  }
+
+  // Failure-domain diversity input: share of scoring candidates per domain.
   const domainCount = new Map<string, number>();
-  for (const c of eligible) domainCount.set(c.failureDomain, (domainCount.get(c.failureDomain) ?? 0) + 1);
+  for (const c of scoringSet) domainCount.set(c.failureDomain, (domainCount.get(c.failureDomain) ?? 0) + 1);
 
   interface Scored {
     candidate: RouterCandidate;
     score: number;
     components: Record<ScoreComponent, number>;
   }
-  const scored: Scored[] = eligible.map((candidate) => {
+  const scored: Scored[] = scoringSet.map((candidate) => {
     const perfEntry = perf.get(candidate.key);
     const hasHistory = (perfEntry?.samples ?? 0) >= config.minBenchmarkSamples;
     const quality = hasHistory ? (perfEntry?.avgQuality ?? 0.5) : 0.5; // exploration default
@@ -366,6 +446,7 @@ export function selectRoute(deps: SelectRouteDeps): RouteDecision {
       score: round4(s.score),
     })),
     weightsUsed: weights,
+    costFirstApplied,
   };
 }
 

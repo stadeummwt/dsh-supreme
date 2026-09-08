@@ -23,6 +23,12 @@ export interface WorkflowLimitsConfig {
   workflowTimeoutMs: number;
   subagentTimeoutMs: number;
   allowedSubagentProviders: string[];
+  /** v1.2: surgical scope — globs a delegation path MUST match (empty = no allowlist). */
+  allowedPaths: string[];
+  /** v1.2: surgical scope — globs a delegation path must NEVER match (wins over allowedPaths). */
+  blockedPaths: string[];
+  /** v1.2: HIGH-risk tasks may only close with recorded verifier PASS evidence. */
+  requireVerifierPassOnClose: boolean;
 }
 
 export const WORKFLOW_LIMIT_DEFAULTS: Readonly<WorkflowLimitsConfig> = Object.freeze({
@@ -32,6 +38,9 @@ export const WORKFLOW_LIMIT_DEFAULTS: Readonly<WorkflowLimitsConfig> = Object.fr
   workflowTimeoutMs: 600_000,
   subagentTimeoutMs: 120_000,
   allowedSubagentProviders: ['spawn'],
+  allowedPaths: [],
+  blockedPaths: [],
+  requireVerifierPassOnClose: false,
 });
 
 export class WorkflowConfigError extends Error {
@@ -63,6 +72,15 @@ export function validateWorkflowLimits(raw: Partial<WorkflowLimitsConfig>): Work
   if (!Array.isArray(limits.allowedSubagentProviders) || limits.allowedSubagentProviders.length === 0) {
     issues.push('allowedSubagentProviders must be a non-empty array');
   }
+  for (const key of ['allowedPaths', 'blockedPaths'] as const) {
+    const list = limits[key];
+    if (!Array.isArray(list) || list.some((g) => typeof g !== 'string' || g.length === 0 || g.length > 512)) {
+      issues.push(`${key} must be an array of non-empty glob strings (≤512 chars)`);
+    }
+  }
+  if (typeof limits.requireVerifierPassOnClose !== 'boolean') {
+    issues.push('requireVerifierPassOnClose must be a boolean');
+  }
   if (issues.length > 0) throw new WorkflowConfigError(issues);
   return limits;
 }
@@ -87,6 +105,8 @@ export interface WorkflowDecisionResult {
   degradedFrom?: WorkflowDecision;
   limits: WorkflowLimitsConfig;
   expectedVerification: 'NONE' | 'BASIC' | 'REQUIRED';
+  /** v1.2: close condition for the task (HIGH risk + requireVerifierPassOnClose). */
+  closeGate: 'NONE' | 'VERIFIER_PASS_REQUIRED';
 }
 
 const DEGRADE_ORDER: WorkflowDecision[] = ['SUPREME_WORKFLOW', 'WORKFLOW', 'SUBAGENT', 'DIRECT'];
@@ -111,6 +131,7 @@ export function decideWorkflow(
       reasonCodes: ['SECRET_ACCESS_DELEGATION_DENIED'],
       limits,
       expectedVerification: 'REQUIRED',
+      closeGate: 'VERIFIER_PASS_REQUIRED',
     };
   }
 
@@ -123,6 +144,7 @@ export function decideWorkflow(
       reasonCodes: [`MISSING_CAPABILITY:${missingCaps.join('+')}`],
       limits,
       expectedVerification: 'NONE',
+      closeGate: 'NONE',
     };
   }
 
@@ -132,6 +154,7 @@ export function decideWorkflow(
       reasonCodes: ['DELEGATION_DEPTH_EXCEEDED'],
       limits,
       expectedVerification: 'NONE',
+      closeGate: 'NONE',
     };
   }
 
@@ -141,6 +164,7 @@ export function decideWorkflow(
       reasonCodes: ['TOTAL_AGENT_BUDGET_EXHAUSTED'],
       limits,
       expectedVerification: 'BASIC',
+      closeGate: input.risk === 'HIGH' && limits.requireVerifierPassOnClose ? 'VERIFIER_PASS_REQUIRED' : 'NONE',
     };
   }
 
@@ -210,7 +234,98 @@ export function decideWorkflow(
     break;
   }
 
-  return { decision, reasonCodes, degradedFrom, limits, expectedVerification };
+  return { decision, reasonCodes, degradedFrom, limits, expectedVerification, closeGate: input.risk === 'HIGH' && limits.requireVerifierPassOnClose ? 'VERIFIER_PASS_REQUIRED' : 'NONE' };
+}
+
+// ---------------------------------------------------------------------------
+// v1.2 — Surgical path scope (v3 plan §4A). Deterministic glob matching with
+// zero dependencies: ** crosses '/', * and ? stay within one segment.
+// blockedPaths WIN over allowedPaths (explicit prohibition beats permission).
+// ---------------------------------------------------------------------------
+
+const globCache = new Map<string, RegExp>();
+
+/** Deterministic glob → RegExp (** crosses segments; * / ? stay in-segment). */
+export function pathMatchesGlob(path: string, pattern: string): boolean {
+  const key = pattern;
+  let re = globCache.get(key);
+  if (!re) {
+    let out = '';
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === '*') {
+        if (pattern[i + 1] === '*') {
+          out += '.*';
+          i++;
+        } else {
+          out += '[^/]*';
+        }
+      } else if (ch === '?') {
+        out += '[^/]';
+      } else {
+        out += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+    }
+    re = new RegExp(`^${out}$`);
+    if (globCache.size < 256) globCache.set(key, re);
+  }
+  return re.test(path);
+}
+
+export type PathScopeReason =
+  | 'NO_PATH_RULES'
+  | 'PATH_ALLOWED'
+  | 'PATH_BLOCKED'
+  | 'PATH_OUTSIDE_ALLOWED';
+
+export interface PathScopeDecision {
+  allowed: boolean;
+  reasonCode: PathScopeReason;
+  matchedBlocked?: string;
+}
+
+/** Deterministic surgical scope: blockedPaths win; empty allowedPaths = no allowlist. */
+export function evaluatePathScope(
+  limits: Pick<WorkflowLimitsConfig, 'allowedPaths' | 'blockedPaths'>,
+  path: string,
+): PathScopeDecision {
+  for (const pattern of limits.blockedPaths) {
+    if (pathMatchesGlob(path, pattern)) {
+      return { allowed: false, reasonCode: 'PATH_BLOCKED', matchedBlocked: pattern };
+    }
+  }
+  if (limits.allowedPaths.length > 0 && !limits.allowedPaths.some((p) => pathMatchesGlob(path, p))) {
+    return { allowed: false, reasonCode: 'PATH_OUTSIDE_ALLOWED' };
+  }
+  return {
+    allowed: true,
+    reasonCode: limits.allowedPaths.length === 0 && limits.blockedPaths.length === 0 ? 'NO_PATH_RULES' : 'PATH_ALLOWED',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// v1.2 — Verifier-gated close (v3 plan §4A/§4B). Honest posture: in STANDARD
+// (allowCommands=false) the verifier cannot EXECUTE tests, so HIGH-risk tasks
+// must carry RECORDED verifier PASS evidence to close; LAB can run real ones.
+// ---------------------------------------------------------------------------
+
+export type CloseVerifierStatus = 'PASS' | 'FAIL' | 'ERROR' | 'UNAVAILABLE' | 'MISSING';
+
+export interface CloseDecision {
+  closable: boolean;
+  reasonCode: string;
+}
+
+/** Deterministic close gate: HIGH risk closes only with recorded verifier PASS when enabled. */
+export function canCloseTask(
+  limits: Pick<WorkflowLimitsConfig, 'requireVerifierPassOnClose'>,
+  input: { risk: 'LOW' | 'MEDIUM' | 'HIGH'; verifierStatus: CloseVerifierStatus },
+): CloseDecision {
+  if (!limits.requireVerifierPassOnClose || input.risk !== 'HIGH') {
+    return { closable: true, reasonCode: 'CLOSE_UNRESTRICTED' };
+  }
+  if (input.verifierStatus === 'PASS') return { closable: true, reasonCode: 'VERIFIER_PASS_RECORDED' };
+  return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
 }
 
 export interface DelegationScope {

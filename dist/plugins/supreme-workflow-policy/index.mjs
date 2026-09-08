@@ -1,14 +1,17 @@
-// dsh-supreme/src/plugins/supreme-workflow-policy/index.ts
+// src/plugins/supreme-workflow-policy/index.ts
 import { z } from "zod";
 
-// dsh-supreme/src/plugins/supreme-workflow-policy/engine.ts
+// src/plugins/supreme-workflow-policy/engine.ts
 var WORKFLOW_LIMIT_DEFAULTS = Object.freeze({
   maxConcurrentAgents: 3,
   maxTotalAgents: 12,
   maxDepth: 2,
   workflowTimeoutMs: 600000,
   subagentTimeoutMs: 120000,
-  allowedSubagentProviders: ["spawn"]
+  allowedSubagentProviders: ["spawn"],
+  allowedPaths: [],
+  blockedPaths: [],
+  requireVerifierPassOnClose: false
 });
 
 class WorkflowConfigError extends Error {
@@ -41,6 +44,15 @@ function validateWorkflowLimits(raw) {
   if (!Array.isArray(limits.allowedSubagentProviders) || limits.allowedSubagentProviders.length === 0) {
     issues.push("allowedSubagentProviders must be a non-empty array");
   }
+  for (const key of ["allowedPaths", "blockedPaths"]) {
+    const list = limits[key];
+    if (!Array.isArray(list) || list.some((g) => typeof g !== "string" || g.length === 0 || g.length > 512)) {
+      issues.push(`${key} must be an array of non-empty glob strings (≤512 chars)`);
+    }
+  }
+  if (typeof limits.requireVerifierPassOnClose !== "boolean") {
+    issues.push("requireVerifierPassOnClose must be a boolean");
+  }
   if (issues.length > 0)
     throw new WorkflowConfigError(issues);
   return limits;
@@ -53,7 +65,8 @@ function decideWorkflow(limits, input) {
       decision: "DENY",
       reasonCodes: ["SECRET_ACCESS_DELEGATION_DENIED"],
       limits,
-      expectedVerification: "REQUIRED"
+      expectedVerification: "REQUIRED",
+      closeGate: "VERIFIER_PASS_REQUIRED"
     };
   }
   const missingCaps = input.requiresCapabilities.filter((cap) => !input.availableCapabilities.includes(cap));
@@ -62,7 +75,8 @@ function decideWorkflow(limits, input) {
       decision: "DENY",
       reasonCodes: [`MISSING_CAPABILITY:${missingCaps.join("+")}`],
       limits,
-      expectedVerification: "NONE"
+      expectedVerification: "NONE",
+      closeGate: "NONE"
     };
   }
   if (input.depth > limits.maxDepth) {
@@ -70,7 +84,8 @@ function decideWorkflow(limits, input) {
       decision: "DENY",
       reasonCodes: ["DELEGATION_DEPTH_EXCEEDED"],
       limits,
-      expectedVerification: "NONE"
+      expectedVerification: "NONE",
+      closeGate: "NONE"
     };
   }
   if (input.totalAgentsUsed >= limits.maxTotalAgents) {
@@ -78,7 +93,8 @@ function decideWorkflow(limits, input) {
       decision: "DIRECT",
       reasonCodes: ["TOTAL_AGENT_BUDGET_EXHAUSTED"],
       limits,
-      expectedVerification: "BASIC"
+      expectedVerification: "BASIC",
+      closeGate: input.risk === "HIGH" && limits.requireVerifierPassOnClose ? "VERIFIER_PASS_REQUIRED" : "NONE"
     };
   }
   const eligibleProviders = input.availableProviders.filter((p) => limits.allowedSubagentProviders.includes(p));
@@ -130,7 +146,56 @@ function decideWorkflow(limits, input) {
     }
     break;
   }
-  return { decision, reasonCodes, degradedFrom, limits, expectedVerification };
+  return { decision, reasonCodes, degradedFrom, limits, expectedVerification, closeGate: input.risk === "HIGH" && limits.requireVerifierPassOnClose ? "VERIFIER_PASS_REQUIRED" : "NONE" };
+}
+var globCache = new Map;
+function pathMatchesGlob(path, pattern) {
+  const key = pattern;
+  let re = globCache.get(key);
+  if (!re) {
+    let out = "";
+    for (let i = 0;i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === "*") {
+        if (pattern[i + 1] === "*") {
+          out += ".*";
+          i++;
+        } else {
+          out += "[^/]*";
+        }
+      } else if (ch === "?") {
+        out += "[^/]";
+      } else {
+        out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+    }
+    re = new RegExp(`^${out}$`);
+    if (globCache.size < 256)
+      globCache.set(key, re);
+  }
+  return re.test(path);
+}
+function evaluatePathScope(limits, path) {
+  for (const pattern of limits.blockedPaths) {
+    if (pathMatchesGlob(path, pattern)) {
+      return { allowed: false, reasonCode: "PATH_BLOCKED", matchedBlocked: pattern };
+    }
+  }
+  if (limits.allowedPaths.length > 0 && !limits.allowedPaths.some((p) => pathMatchesGlob(path, p))) {
+    return { allowed: false, reasonCode: "PATH_OUTSIDE_ALLOWED" };
+  }
+  return {
+    allowed: true,
+    reasonCode: limits.allowedPaths.length === 0 && limits.blockedPaths.length === 0 ? "NO_PATH_RULES" : "PATH_ALLOWED"
+  };
+}
+function canCloseTask(limits, input) {
+  if (!limits.requireVerifierPassOnClose || input.risk !== "HIGH") {
+    return { closable: true, reasonCode: "CLOSE_UNRESTRICTED" };
+  }
+  if (input.verifierStatus === "PASS")
+    return { closable: true, reasonCode: "VERIFIER_PASS_RECORDED" };
+  return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
 }
 function buildDelegationScope(scope) {
   if (scope.secretPolicy !== "DENY_ALL") {
@@ -142,7 +207,7 @@ function buildDelegationScope(scope) {
   return Object.freeze({ ...scope, secretPolicy: "DENY_ALL" });
 }
 
-// dsh-supreme/src/plugins/supreme-workflow-policy/index.ts
+// src/plugins/supreme-workflow-policy/index.ts
 var name = "supreme-workflow-policy";
 var inject = ["supremePolicy", "supremeObservability", "supremeVerifier", "subagents", "workflowEngine"];
 var Config = z.object({
@@ -151,7 +216,10 @@ var Config = z.object({
   maxDepth: z.number().int().min(0).max(4).default(2),
   workflowTimeoutMs: z.number().int().min(1000).default(600000),
   subagentTimeoutMs: z.number().int().min(1000).default(120000),
-  allowedSubagentProviders: z.array(z.string()).default(["in-process"])
+  allowedSubagentProviders: z.array(z.string()).default(["in-process"]),
+  allowedPaths: z.array(z.string().min(1).max(512)).default([]),
+  blockedPaths: z.array(z.string().min(1).max(512)).default([]),
+  requireVerifierPassOnClose: z.boolean().default(false)
 });
 function apply(ctx, config) {
   const limits = validateWorkflowLimits(config);
@@ -161,12 +229,14 @@ function apply(ctx, config) {
       const result = decideWorkflow(limits, input);
       observability.record("workflow_decision", {
         workflowDecisionId: genId("wfdec"),
-        detail: `${result.decision}${result.degradedFrom ? `:from:${result.degradedFrom}` : ""}`
+        detail: `${result.decision}${result.degradedFrom ? `:from:${result.degradedFrom}` : ""}:${result.closeGate}`
       });
       return result;
     },
     buildDelegationScope: (scope) => buildDelegationScope(scope),
-    limits: () => limits
+    limits: () => limits,
+    evaluatePathScope: (path) => evaluatePathScope(limits, path),
+    canCloseTask: (input) => canCloseTask(limits, input)
   };
   ctx.provide("supremeWorkflowPolicy", Object.freeze(service));
   ctx.logger.info("supreme-workflow-policy active (maxConcurrent=%d maxTotal=%d maxDepth=%d)", limits.maxConcurrentAgents, limits.maxTotalAgents, limits.maxDepth);

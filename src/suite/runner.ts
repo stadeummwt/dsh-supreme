@@ -26,6 +26,15 @@ import {
   verifierChecks,
   workflowChecks,
 } from './engine-checks';
+import { runConfigHygiene, scanPinnedRefs, shippedConfigPaths, type ConfigHygieneResult, type PinnedRefsResult } from './config-hygiene';
+import { runSurfaceAudit, type SurfaceResult } from './surface-audit';
+import {
+  BENCHMARK_RECORD_REQUIRED,
+  LEDGER_NOTE_REQUIRED,
+  SCHEMA_FILES,
+  SUITE_REPORT_REQUIRED_TOP_LEVEL,
+  type SixSurfaceName,
+} from './schema-contract';
 
 /**
  * Layout-aware root resolution. Two supported layouts:
@@ -44,15 +53,12 @@ function resolveRoots(): { PROJECT_ROOT: string; SUPREME_ROOT: string } {
     const p = process.env.SUPREME_PROJECT_ROOT;
     return { PROJECT_ROOT: p, SUPREME_ROOT: existsSync(join(p, 'dsh-supreme')) ? join(p, 'dsh-supreme') : p };
   }
-  // shells opened at the app root / Next.js server cwd
-  if (existsSync(join(process.cwd(), 'dsh-supreme', 'real', 'boot.mjs'))) {
-    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: join(process.cwd(), 'dsh-supreme') };
-  }
-  if (isSupremeRoot(process.cwd())) {
-    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: process.cwd() };
-  }
-  // bun CLI from any cwd: derive from the entry script (…/src/suite/cli.ts).
-  // (import.meta.url is deliberately avoided here — bundlers choke on it.)
+  // 1. bun CLI from any cwd: derive from the entry script (…/src/suite/cli.ts).
+  //    Entry-script location beats cwd: running `bun run suite` from INSIDE
+  //    dsh-supreme/ in the monorepo layout used to mis-resolve to the published
+  //    layout and fake an UPSTREAM_CHECKOUT_UNAVAILABLE (v1.1 UX wart — fixed
+  //    in v1.2 by trying the entry script BEFORE the cwd rules).
+  //    (import.meta.url is deliberately avoided here — bundlers choke on it.)
   const entry = process.argv[1] ? resolve(process.argv[1]) : '';
   let dir = entry ? dirname(entry) : '';
   for (let i = 0; i < 6 && dir && !isSupremeRoot(dir); i++) dir = dirname(dir);
@@ -60,6 +66,13 @@ function resolveRoots(): { PROJECT_ROOT: string; SUPREME_ROOT: string } {
     const parent = dirname(dir);
     const monorepo = existsSync(join(parent, 'dsh-supreme'));
     return { PROJECT_ROOT: monorepo ? parent : dir, SUPREME_ROOT: dir };
+  }
+  // 2. shells opened at the app root / Next.js server cwd.
+  if (existsSync(join(process.cwd(), 'dsh-supreme', 'real', 'boot.mjs'))) {
+    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: join(process.cwd(), 'dsh-supreme') };
+  }
+  if (isSupremeRoot(process.cwd())) {
+    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: process.cwd() };
   }
   return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: process.cwd() };
 }
@@ -142,6 +155,14 @@ export interface SuiteReport {
     paidAutomaticFallback: 'DISABLED';
     productionConfigAllowPaid: boolean;
   };
+  /** v1.2: every shipped YAML config key validates against the real plugin schema. */
+  configHygiene: ConfigHygieneResult;
+  /** v1.2: every external reference in shipped configs is pinned. */
+  pinnedRefs: PinnedRefsResult;
+  /** v1.2: six-surface offline security audit (AgentShield analogue). */
+  sixSurfaceAudit: Array<{ surface: SixSurfaceName; label: string; status: GateStatus; findings: string[]; scanned: number }>;
+  /** v1.2: published JSON schemas exist and match the runtime contract. */
+  schemas: { ok: boolean; checked: string[]; findings: string[] };
   performance: {
     routerDecisionMs: number;
     observabilityWriteMs: number;
@@ -188,6 +209,55 @@ function productionConfigAllowsPaid(): boolean {
     if (existsSync(path) && /allowPaid:\s*true/.test(readFileSync(path, 'utf8'))) return true;
   }
   return false;
+}
+
+/** v1.2: published schemas must exist and their required lists must match the runtime contract. */
+function checkSchemaContract(): { ok: boolean; checked: string[]; findings: string[] } {
+  const findings: string[] = [];
+  const checked: string[] = [];
+  const schemasDir = join(SUPREME_ROOT, 'schemas');
+  for (const name of SCHEMA_FILES) {
+    const file = join(schemasDir, name);
+    checked.push(`schemas/${name}`);
+    if (!existsSync(file)) {
+      findings.push(`missing schemas/${name}`);
+      continue;
+    }
+    try {
+      const schema = JSON.parse(readFileSync(file, 'utf8')) as {
+        required?: string[];
+        properties?: Record<string, { required?: string[] }>;
+        $schema?: string;
+      };
+      if (!schema.$schema) findings.push(`schemas/${name}: missing $schema declaration`);
+      if (name === 'suite-report.schema.json') {
+        const required = schema.required ?? [];
+        for (const field of SUITE_REPORT_REQUIRED_TOP_LEVEL) {
+          if (!required.includes(field)) findings.push(`schemas/${name}: required[] missing "${field}"`);
+        }
+      }
+      if (name === 'benchmark-record.schema.json') {
+        // The record kinds live under oneOf (discriminated by properties.kind.const).
+        const oneOf = (schema as { oneOf?: Array<{ required?: string[]; properties?: { kind?: { const?: string } } }> }).oneOf ?? [];
+        for (const [kind, fields] of Object.entries(BENCHMARK_RECORD_REQUIRED)) {
+          const kindDef = oneOf.find((v) => v.properties?.kind?.const === kind);
+          const kindRequired = kindDef?.required ?? [];
+          for (const field of fields) {
+            if (!kindRequired.includes(field)) findings.push(`schemas/${name}: ${kind} required[] missing "${field}"`);
+          }
+        }
+      }
+      if (name === 'ledger-note.schema.json') {
+        const required = schema.required ?? [];
+        for (const field of LEDGER_NOTE_REQUIRED) {
+          if (!required.includes(field)) findings.push(`schemas/${name}: required[] missing "${field}"`);
+        }
+      }
+    } catch (err) {
+      findings.push(`schemas/${name}: unparseable JSON (${String(err)})`);
+    }
+  }
+  return { ok: findings.length === 0, checked, findings };
 }
 
 interface BootOutcome {
@@ -357,6 +427,19 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
 
   const perf = await measurePerformance();
 
+  // ---- v1.2: config hygiene + pinned refs + six-surface audit + schemas ---
+  const configHygiene = runConfigHygiene(SUPREME_ROOT);
+  const pinnedRefs = scanPinnedRefs(SUPREME_ROOT, shippedConfigPaths(SUPREME_ROOT));
+  const sixSurface = runSurfaceAudit(SUPREME_ROOT);
+  const sixSurfaceAudit = sixSurface.map((s) => ({
+    surface: s.surface,
+    label: s.label,
+    status: (s.status === 'PASS' ? 'PASS' : 'FAIL') as GateStatus,
+    findings: s.findings,
+    scanned: s.scanned,
+  }));
+  const schemas = checkSchemaContract();
+
   // ---- Verdict -----------------------------------------------------------
   const blockingGates: string[] = [];
   if (minimalGate.load === 'SKIP') blockingGates.push('REAL_BOOT_SKIPPED');
@@ -364,6 +447,10 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
   for (const c of compositions) if (c.status === 'FAIL') blockingGates.push(`COMPOSITION:${c.name}`);
   if (leaks > 0) blockingGates.push('SECRET_SENTINEL_LEAKS');
   if (productionConfigAllowsPaid()) blockingGates.push('PAID_FALLBACK_IN_PRODUCTION_CONFIG');
+  if (!configHygiene.ok) blockingGates.push(`CONFIG_KEY_HYGIENE:${configHygiene.findings.length}`);
+  if (!pinnedRefs.ok) blockingGates.push(`PINNED_REF_UNPINNED:${pinnedRefs.findings.length}`);
+  for (const s of sixSurfaceAudit) if (s.status === 'FAIL') blockingGates.push(`SURFACE_AUDIT:${s.surface}`);
+  if (!schemas.ok) blockingGates.push(`SCHEMA_CONTRACT:${schemas.findings.length}`);
   const commitUnchanged = upstreamPresent ? commit === DSH_COMMIT : false;
   if (!upstreamPresent) blockingGates.push('UPSTREAM_CHECKOUT_UNAVAILABLE');
   else {
@@ -400,6 +487,10 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
       paidAutomaticFallback: 'DISABLED',
       productionConfigAllowPaid: productionConfigAllowsPaid(),
     },
+    configHygiene,
+    pinnedRefs,
+    sixSurfaceAudit,
+    schemas,
     performance: { ...perf, realBootMs },
     verdict: blockingGates.length === 0 ? 'COMPLETE' : 'PARTIAL',
     blockingGates,

@@ -1,8 +1,8 @@
-// dsh-supreme/src/plugins/supreme-benchmark/index.ts
+// src/plugins/supreme-benchmark/index.ts
 import { z } from "zod";
 import { resolve } from "node:path";
 
-// dsh-supreme/src/plugins/supreme-benchmark/engine.ts
+// src/plugins/supreme-benchmark/engine.ts
 var FAILURE_CLASSES = [
   "AUTH",
   "RATE_LIMIT",
@@ -51,6 +51,12 @@ function validateBenchmarkRecord(raw) {
     assertCondition(typeof rec.provider === "string", issues, "provider required");
     assertCondition(typeof rec.model === "string", issues, "model required");
     assertCondition(typeof rec.startedAt === "number", issues, "startedAt required");
+    if (rec.commitHash !== undefined) {
+      assertCondition(rec.commitHash === "UNAVAILABLE" || typeof rec.commitHash === "string" && /^[a-f0-9]{40}$/.test(rec.commitHash), issues, "commitHash must be a 40-hex sha or UNAVAILABLE");
+    }
+    if (rec.irVersion !== undefined) {
+      assertCondition(typeof rec.irVersion === "string" && /^[A-Za-z0-9._-]{1,32}$/.test(rec.irVersion), issues, "irVersion must match [A-Za-z0-9._-]{1,32}");
+    }
     if (rec.qualityScore !== undefined) {
       assertCondition(typeof rec.qualityScore === "number" && rec.qualityScore >= 0 && rec.qualityScore <= 1, issues, "qualityScore must be within [0,1]");
     }
@@ -190,8 +196,11 @@ class BenchmarkStore {
       model: input.model,
       profile: input.profile,
       sessionId: input.sessionId,
+      commitHash: input.commitHash,
+      irVersion: input.irVersion,
       startedAt: input.startedAt ?? Date.now()
     };
+    validateBenchmarkRecord(run);
     await this.persist(run);
     return run;
   }
@@ -256,7 +265,7 @@ class BenchmarkStore {
   }
 }
 
-// dsh-supreme/src/plugins/supreme-benchmark/index.ts
+// src/plugins/supreme-benchmark/index.ts
 var name = "supreme-benchmark";
 var inject = [];
 var Config = z.object({
