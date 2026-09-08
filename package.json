@@ -30,7 +30,8 @@
     "boot": "node real/boot.mjs",
     "bundle:verify": "node real/bundle-verify.mjs",
     "build:upstream": "DSH_REPO=\"${DSH_UPSTREAM_ROOT:-}\"; [ -n \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/../deepseek-harness\"; [ -d \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/node_modules/.upstream/deepseek-harness\"; SUPREME_ROOT=\"$(pwd)\"; \"$SUPREME_ROOT/real/build-batched.sh\" host \"$DSH_REPO/tsconfig.host.json\" \"$DSH_REPO\" && cd \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE host && \"$SUPREME_ROOT/real/build-batched.sh\" client \"$DSH_REPO/tsconfig.client.json\" \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE client",
-    "composition:verify": "node real/composition-verify.mjs"
+    "composition:verify": "node real/composition-verify.mjs",
+    "v3:verify": "node real/v3-config-verify.mjs"
   },
   "dependencies": {
     "zod": "^4.1.5"

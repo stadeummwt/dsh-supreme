@@ -1,0 +1,38 @@
+# supreme-policy.cordis.yml — BETULAN (v3-plan review, 2026-09)
+# =====================================================================
+# Pembetulan bagi cadangan konfigurasi v3: setiap key di bawah DISAHKAN
+# wujud dalam schema Config sebenar (src/plugins/supreme-policy/index.ts)
+# dan disahkan menembusi sehingga ke service melalui boot sebenar
+# (`bun run v3:verify` → V3_CONFIG_REVIEW_EVIDENCE).
+#
+# Key cadangan v3 yang DIBUANG (tiada dalam schema; zod menanggalkannya
+# secara senyap — boot lulus, tadbir urus tidak aktif):
+#   enableUnicodeSanitization / logTaintAttempts / unknownCostPolicy /
+#   enableSensitiveSinkBlocking / logLevel
+#   → kekalkan hasratnya sebagai backlog feature v1.2 (unicode scrub
+#     deterministik), BUKAN sebagai key config fiksyen.
+#
+# Struktur: fail ini adalah SATU row plugin. Untuk suite penuh, pasang
+# bundle (dsh plugin add github:stadeummwt/dsh-supreme) dan pilih
+# komposisi dari config/compositions/*.patch.yml — jangan hand-roll.
+# `name` relatif hanya resolve bila fail duduk sebelah dist/ (ankor patch);
+# dalam profile cordis.yml, biarkan bundle layer yang miliki row ini dan
+# guna fail ini sebagai UPDATE overlay (- id: supreme-policy, config: ...).
+
+- id: supreme-policy
+  name: './dist/plugins/supreme-policy/index.mjs'
+  config:
+    # Kelas pelaksanaan tadbir urus — kunci PALING PENTING, tiada dalam
+    # yml asal (asalnya jatuh ke default STANDARD secara senyap).
+    executionClass: SUPREME
+
+    # Kos: RM0-first. PAID/TRIAL dinafikan; UNKNOWN ialah literal-false
+    # kekal (hard-DENY by design — tiada config boleh mengaktifkannya).
+    allowPaid: false
+    allowTrial: false
+    allowUnknownCost: false
+
+    # Gerbang pengesahan: tindakan berisiko tinggi wajib rekod PASS
+    # verifier (inilah bentuk sebenar "sensitive sink blocking").
+    requireVerificationForHighRisk: true
+    maxDelegationDepth: 3
