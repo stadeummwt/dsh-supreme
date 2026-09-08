@@ -24,11 +24,11 @@ supreme-workflow-policy → supremeWorkflowPolicy
 
 ## 2. The upstream is read-only
 
-- Pinned upstream: `https://github.com/deepseek-ai/deepseek-harness` at commit `d347e703908d0406b7a7ef80e3a0e594d86b2215` (tag `dsh-v0.1.3-alpha.1`, DSH `0.1.3-alpha.1`, vendored cordis `4.0.2`), checkout at `/home/z/deepseek-harness`.
-- **NEVER modify anything under `/home/z/deepseek-harness`.** No edits, no `git pull`, no `reset --hard`, no dependency bumps, no config tweaks. The checkout must stay clean:
+- Pinned upstream: `https://github.com/deepseek-ai/deepseek-harness` at commit `d347e703908d0406b7a7ef80e3a0e594d86b2215` (tag `dsh-v0.1.3-alpha.1`, DSH `0.1.3-alpha.1`, vendored cordis `4.0.2`). The checkout location is resolved at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` → in-project `node_modules/.upstream/deepseek-harness`.
+- **NEVER modify anything inside the pinned upstream checkout.** No edits, no `git pull`, no `reset --hard`, no dependency bumps, no config tweaks. The checkout must stay clean:
   ```bash
-  git -C /home/z/deepseek-harness rev-parse HEAD     # must equal the pin
-  git -C /home/z/deepseek-harness status --porcelain # must be empty
+  git -C "$DSH_ROOT" rev-parse HEAD     # must equal the pin
+  git -C "$DSH_ROOT" status --porcelain # must be empty
   ```
 - The suite blocks release on `UPSTREAM_COMMIT_CHANGED` and `UPSTREAM_WORKTREE_DIRTY`. Triggering either gate is a merge blocker.
 - Moving to a newer upstream is a deliberate procedure — follow [`docs/runbooks/upgrade-pinned-dsh.md`](./docs/runbooks/upgrade-pinned-dsh.md). It starts by *recording the old commit* and never mutates the old checkout.

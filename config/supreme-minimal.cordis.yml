@@ -4,4 +4,4 @@
     - id: supreme-minimal-probe
       name: "__SUPREME_DIST__/supreme-minimal-probe/index.mjs"
       config:
-        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/minimal-probe.markers.jsonl"
+        markerPath: "__SUPREME_DATA__/real/minimal-probe.markers.jsonl"

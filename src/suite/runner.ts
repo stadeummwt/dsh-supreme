@@ -14,7 +14,8 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
 import { runChecks, type CheckResult } from './harness';
 import {
   benchmarkChecks,
@@ -26,10 +27,66 @@ import {
   workflowChecks,
 } from './engine-checks';
 
-export const PROJECT_ROOT = process.env.SUPREME_PROJECT_ROOT || '/home/z/my-project';
-export const DSH_ROOT = process.env.DSH_UPSTREAM_ROOT || '/home/z/deepseek-harness';
+/**
+ * Layout-aware root resolution. Two supported layouts:
+ *  - monorepo:  <project-root>/dsh-supreme/{src,real,dist,data,config}
+ *  - published: <repo-root>/{src,real,dist,data,config}  (dsh-supreme IS the repo)
+ * SUPREME_ROOT = the directory holding real/boot.mjs + src/plugins.
+ * PROJECT_ROOT = its parent when the parent looks like the monorepo app root,
+ * otherwise SUPREME_ROOT itself.
+ */
+function isSupremeRoot(dir: string): boolean {
+  return existsSync(join(dir, 'real', 'boot.mjs')) && existsSync(join(dir, 'src', 'plugins'));
+}
+
+function resolveRoots(): { PROJECT_ROOT: string; SUPREME_ROOT: string } {
+  if (process.env.SUPREME_PROJECT_ROOT) {
+    const p = process.env.SUPREME_PROJECT_ROOT;
+    return { PROJECT_ROOT: p, SUPREME_ROOT: existsSync(join(p, 'dsh-supreme')) ? join(p, 'dsh-supreme') : p };
+  }
+  // shells opened at the app root / Next.js server cwd
+  if (existsSync(join(process.cwd(), 'dsh-supreme', 'real', 'boot.mjs'))) {
+    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: join(process.cwd(), 'dsh-supreme') };
+  }
+  if (isSupremeRoot(process.cwd())) {
+    return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: process.cwd() };
+  }
+  // bun CLI from any cwd: derive from the entry script (…/src/suite/cli.ts).
+  // (import.meta.url is deliberately avoided here — bundlers choke on it.)
+  const entry = process.argv[1] ? resolve(process.argv[1]) : '';
+  let dir = entry ? dirname(entry) : '';
+  for (let i = 0; i < 6 && dir && !isSupremeRoot(dir); i++) dir = dirname(dir);
+  if (isSupremeRoot(dir)) {
+    const parent = dirname(dir);
+    const monorepo = existsSync(join(parent, 'dsh-supreme'));
+    return { PROJECT_ROOT: monorepo ? parent : dir, SUPREME_ROOT: dir };
+  }
+  return { PROJECT_ROOT: process.cwd(), SUPREME_ROOT: process.cwd() };
+}
+
+const roots = resolveRoots();
+
+/** Portable upstream resolution: env override, else sibling checkout of the pin,
+ *  else in-project checkouts (<root>/upstream or <root>/node_modules/.upstream —
+ *  the latter stays invisible to bundler crawls). */
+function resolveDshRoot(projectRoot: string): string {
+  if (process.env.DSH_UPSTREAM_ROOT) return process.env.DSH_UPSTREAM_ROOT;
+  const candidates = [
+    join(projectRoot, '..', 'deepseek-harness'),
+    join(projectRoot, 'upstream', 'deepseek-harness'),
+    join(projectRoot, 'node_modules', '.upstream', 'deepseek-harness'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(join(c, 'package.json'))) return c;
+  }
+  return candidates[2];
+}
+
+export const PROJECT_ROOT = roots.PROJECT_ROOT;
+export const SUPREME_ROOT = roots.SUPREME_ROOT;
+export const DSH_ROOT = resolveDshRoot(PROJECT_ROOT);
 export const DSH_COMMIT = 'd347e703908d0406b7a7ef80e3a0e594d86b2215';
-export const BOOT_HARNESS = join(PROJECT_ROOT, 'dsh-supreme', 'real', 'boot.mjs');
+export const BOOT_HARNESS = join(SUPREME_ROOT, 'real', 'boot.mjs');
 
 export type GateStatus = 'PASS' | 'FAIL' | 'SKIP';
 
@@ -127,7 +184,7 @@ function scanSentinels(dirs: string[]): { leaks: number; scanned: string[] } {
 function productionConfigAllowsPaid(): boolean {
   // Production profiles must never set allowPaid=true.
   for (const profile of ['core.cordis.yml', 'standard.cordis.yml', 'supreme.cordis.yml']) {
-    const path = join(PROJECT_ROOT, 'dsh-supreme', 'config', profile);
+    const path = join(SUPREME_ROOT, 'config', profile);
     if (existsSync(path) && /allowPaid:\s*true/.test(readFileSync(path, 'utf8'))) return true;
   }
   return false;
@@ -279,8 +336,8 @@ export async function runFullSuite(options: { skipRealBoots?: boolean } = {}): P
 
   // ---- Security + upstream integrity ------------------------------------
   const { leaks } = scanSentinels([
-    join(PROJECT_ROOT, 'dsh-supreme', 'data'),
-    join(PROJECT_ROOT, 'dsh-supreme', 'benchmarks', 'reports'),
+    join(SUPREME_ROOT, 'data'),
+    join(SUPREME_ROOT, 'benchmarks', 'reports'),
   ]);
   const commit = git(['rev-parse', 'HEAD']);
   const status = git(['status', '--porcelain']);

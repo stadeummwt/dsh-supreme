@@ -10,10 +10,35 @@
  * Usage: node dsh-supreme/real/boot.mjs --profile <name> [--setup] [--timeout 45000]
  */
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const PROJECT_ROOT = process.env.SUPREME_PROJECT_ROOT || '/home/z/my-project';
-const DSH_ROOT = process.env.DSH_UPSTREAM_ROOT || '/home/z/deepseek-harness';
+/**
+ * Layout-aware resolution. Two supported layouts:
+ *  - monorepo:  <project-root>/dsh-supreme/real/boot.mjs
+ *  - published: <repo-root>/real/boot.mjs (dsh-supreme IS the repo)
+ * SUPREME_ROOT is this file's grandparent; PROJECT_ROOT is its parent when the
+ * parent looks like the monorepo app root, else SUPREME_ROOT itself.
+ */
+const SUPREME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const parentDir = dirname(SUPREME_ROOT);
+const PROJECT_ROOT =
+  process.env.SUPREME_PROJECT_ROOT ||
+  (existsSync(join(parentDir, 'dsh-supreme')) ? parentDir : SUPREME_ROOT);
+// env override, else sibling checkout of the pin, else in-project checkouts
+function resolveDshRoot() {
+  if (process.env.DSH_UPSTREAM_ROOT) return process.env.DSH_UPSTREAM_ROOT;
+  const candidates = [
+    join(PROJECT_ROOT, '..', 'deepseek-harness'),
+    join(PROJECT_ROOT, 'upstream', 'deepseek-harness'),
+    join(PROJECT_ROOT, 'node_modules', '.upstream', 'deepseek-harness'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(join(c, 'package.json'))) return c;
+  }
+  return candidates[2];
+}
+const DSH_ROOT = resolveDshRoot();
 process.env.DSH_HOME = process.env.DSH_HOME || join(PROJECT_ROOT, '.dsh-home');
 
 const argv = process.argv.slice(2);
@@ -25,14 +50,24 @@ const profileName = argOf('--profile', 'supreme');
 const timeoutMs = Number(argOf('--timeout', '45000'));
 const doSetup = argv.includes('--setup');
 
-const { boot, loadProfile, healProfilesModuleFallback, PROFILE_PATCH_FILENAME } = await import(
-  '@deepseek-ai/dsh-app-boot'
-);
+let bootApi;
+try {
+  bootApi = await import('@deepseek-ai/dsh-app-boot');
+} catch {
+  // Published-repo layout: resolve through the pinned upstream's built host
+  // entry instead of a host node_modules symlink.
+  bootApi = await import(
+    'file://' + join(DSH_ROOT, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
+  );
+}
+
+const { boot, loadProfile, healProfilesModuleFallback, PROFILE_PATCH_FILENAME } = bootApi;
 
 const INSTALL_ANCHOR = join(DSH_ROOT, 'apps', 'cli', 'package.json');
 const profileDir = join(process.env.DSH_HOME, 'profiles', profileName);
-const distDir = join(PROJECT_ROOT, 'dsh-supreme', 'dist', 'plugins');
-const dataReal = join(PROJECT_ROOT, 'dsh-supreme', 'data', 'real');
+const distDir = join(SUPREME_ROOT, 'dist', 'plugins');
+const dataDir = join(SUPREME_ROOT, 'data');
+const dataReal = join(dataDir, 'real');
 
 function fail(message) {
   console.error(JSON.stringify({ ok: false, error: message }));
@@ -40,10 +75,11 @@ function fail(message) {
 }
 
 function setupProfile(name) {
-  const templatePath = join(PROJECT_ROOT, 'dsh-supreme', 'config', `${name}.cordis.yml`);
+  const templatePath = join(SUPREME_ROOT, 'config', `${name}.cordis.yml`);
   if (!existsSync(templatePath)) fail(`no composition template for profile "${name}"`);
   const template = readFileSync(templatePath, 'utf8')
     .replaceAll('__SUPREME_DIST__', distDir)
+    .replaceAll('__SUPREME_DATA__', dataDir)
     .replaceAll('__PROJECT_ROOT__', PROJECT_ROOT);
 
   mkdirSync(profileDir, { recursive: true });

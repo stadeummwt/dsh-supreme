@@ -11,12 +11,12 @@
     - id: supreme-observability
       name: "__SUPREME_DIST__/supreme-observability/index.mjs"
       config:
-        dataDir: "__PROJECT_ROOT__/dsh-supreme/data/observability"
+        dataDir: "__SUPREME_DATA__/observability"
 
     - id: supreme-benchmark
       name: "__SUPREME_DIST__/supreme-benchmark/index.mjs"
       config:
-        dataDir: "__PROJECT_ROOT__/dsh-supreme/data/benchmark"
+        dataDir: "__SUPREME_DATA__/benchmark"
 
     - id: supreme-fake-llm
       name: "__SUPREME_DIST__/supreme-fake-llm/index.mjs"
@@ -53,7 +53,7 @@
       config:
         allowCommands: true
         allowedRoots:
-          - "__PROJECT_ROOT__/dsh-supreme/data"
+          - "__SUPREME_DATA__"
 
     - id: supreme-memory-policy
       name: "__SUPREME_DIST__/supreme-memory-policy/index.mjs"
@@ -72,4 +72,4 @@
     - id: supreme-gate-driver
       name: "__SUPREME_DIST__/supreme-gate-driver/index.mjs"
       config:
-        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/gates-lab.markers.jsonl"
+        markerPath: "__SUPREME_DATA__/real/gates-lab.markers.jsonl"

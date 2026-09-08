@@ -11,7 +11,7 @@ One self-contained ESM bundle per plugin. Bundles externalize only `zod` and Nod
 Run from the project root. `NODE_OPTIONS='--max-old-space-size=2048'` is part of the verified command; keep it.
 
 ```bash
-cd /home/z/my-project
+cd <project-root>
 
 PLUGINS="supreme-policy supreme-observability supreme-benchmark supreme-router \
 supreme-verifier supreme-memory-policy supreme-workflow-policy \
@@ -43,7 +43,7 @@ node -e "import('./dsh-supreme/dist/plugins/supreme-policy/index.mjs').then(m =>
 Rebuild upstream libraries only after a **new, deliberate** upstream pin (see [upgrade-pinned-dsh.md](./upgrade-pinned-dsh.md)) or after an upstream clean. The pinned checkout is never modified by this project, so its build outputs are stable:
 
 ```bash
-cd /home/z/deepseek-harness
+cd <dsh-upstream-checkout>
 NODE_OPTIONS='--max-old-space-size=2048' pnpm build:lib
 ```
 

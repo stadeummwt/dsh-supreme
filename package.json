@@ -1,0 +1,20 @@
+{
+  "name": "dsh-supreme",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Seven host-side policy plugins for DeepSeek Harness, composed through DSH's vendored Cordis runtime. Pinned upstream: deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215.",
+  "scripts": {
+    "suite": "bun run src/suite/cli.ts",
+    "suite:json": "bun run src/suite/cli.ts --json",
+    "suite:keyless": "bun run src/suite/cli.ts --skip-real-boots",
+    "boot": "node real/boot.mjs",
+    "build:upstream": "DSH_REPO=\"${DSH_UPSTREAM_ROOT:-$(pwd)/upstream/deepseek-harness}\" real/build-batched.sh host \"$DSH_REPO/tsconfig.host.json\" && DSH_REPO=\"$DSH_REPO\" real/build-batched.sh client \"$DSH_REPO/tsconfig.client.json\" && cd \"$DSH_REPO\" && npx tsdown --env.DSH_BUILD_FACE host && npx tsdown --env.DSH_BUILD_FACE client"
+  },
+  "dependencies": {
+    "zod": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

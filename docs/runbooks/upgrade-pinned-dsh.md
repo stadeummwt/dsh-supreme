@@ -13,8 +13,8 @@ Goal: move DSH Supreme to a newer upstream commit **safely**, keeping every clai
 ### 1. Record the old state (before touching anything)
 
 ```bash
-git -C /home/z/deepseek-harness rev-parse HEAD            # e.g. d347e703… — record this
-git -C /home/z/deepseek-harness status --porcelain        # must be empty
+git -C <dsh-upstream-checkout> rev-parse HEAD            # e.g. d347e703… — record this
+git -C <dsh-upstream-checkout> status --porcelain        # must be empty
 cp dsh-supreme/SOURCE-OF-TRUTH.md /tmp/sot-backup.md      # keep the old record
 ```
 
@@ -24,19 +24,19 @@ Record: old commit, DSH version, cordis version, and the last suite verdict (exp
 
 ```bash
 # Preferred: clone fresh / fetch into a NEW directory (old one stays pristine)
-git clone https://github.com/deepseek-ai/deepseek-harness /home/z/deepseek-harness-next
-git -C /home/z/deepseek-harness-next checkout <new-commit-or-tag>
-git -C /home/z/deepseek-harness-next status --porcelain   # must be empty
+git clone https://github.com/deepseek-ai/deepseek-harness <dsh-upstream-checkout>-next
+git -C <dsh-upstream-checkout>-next checkout <new-commit-or-tag>
+git -C <dsh-upstream-checkout>-next status --porcelain   # must be empty
 ```
 
-Do **not** `git pull` inside `/home/z/deepseek-harness`. If the new revision is rejected, the old checkout must still be byte-identical to the old pin.
+Do **not** `git pull` inside `<dsh-upstream-checkout>`. If the new revision is rejected, the old checkout must still be byte-identical to the old pin.
 
 ### 3. Re-run the evidence mapping
 
 Point the tools at the new checkout and re-verify every upstream assumption:
 
 ```bash
-export DSH_UPSTREAM_ROOT=/home/z/deepseek-harness-next
+export DSH_UPSTREAM_ROOT=<dsh-upstream-checkout>-next
 ```
 
 - **Service names**: confirm `ctx.llm`, `ctx.sessions`, `ctx.systemPrompt`, `ctx.tokenMeter`, `ctx.credentials`, `ctx.subagents`, `ctx.workflowEngine` still exist with the same names and shapes (see the evidence table in [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md); re-check each cited file/line).
@@ -68,7 +68,7 @@ Required: `VERDICT COMPLETE` — 46/46 Level-A checks, 5/5 real boots (fresh tim
 - Update `DSH_COMMIT` in `src/suite/runner.ts` (and the same constant's use in `src/app/api/supreme/status/route.ts` via the import — it reads from the runner).
 - Update `SOURCE-OF-TRUTH.md`, the README pinned-upstream table, and `docs/architecture/ARCHITECTURE.md` evidence table with the new commit/versions/line numbers.
 - Update the boot runbooks' expected times/markers from the fresh suite report.
-- Swap the checkouts deliberately (`/home/z/deepseek-harness-next` → becomes the new pin path) — archive or delete the old checkout only after the new suite is green.
+- Swap the checkouts deliberately (`<dsh-upstream-checkout>-next` → becomes the new pin path) — archive or delete the old checkout only after the new suite is green.
 
 ## Rollback of an upgrade attempt
 

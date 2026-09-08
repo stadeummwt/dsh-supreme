@@ -4,12 +4,12 @@
     - id: supreme-minimal-probe
       name: "__SUPREME_DIST__/supreme-minimal-probe/index.mjs"
       config:
-        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/minimal-probe.markers.jsonl"
+        markerPath: "__SUPREME_DATA__/real/minimal-probe.markers.jsonl"
 
     - id: supreme-boot-probe
       name: "__SUPREME_DIST__/supreme-boot-probe/index.mjs"
       config:
-        markerPath: "__PROJECT_ROOT__/dsh-supreme/data/real/boot-probe-standard.markers.jsonl"
+        markerPath: "__SUPREME_DATA__/real/boot-probe-standard.markers.jsonl"
 
     - id: supreme-policy
       name: "__SUPREME_DIST__/supreme-policy/index.mjs"
@@ -19,7 +19,7 @@
     - id: supreme-observability
       name: "__SUPREME_DIST__/supreme-observability/index.mjs"
       config:
-        dataDir: "__PROJECT_ROOT__/dsh-supreme/data/observability"
+        dataDir: "__SUPREME_DATA__/observability"
 
     - id: supreme-memory-policy
       name: "__SUPREME_DIST__/supreme-memory-policy/index.mjs"
@@ -34,4 +34,4 @@
       name: "__SUPREME_DIST__/supreme-verifier/index.mjs"
       config:
         allowedRoots:
-          - "__PROJECT_ROOT__/dsh-supreme/data"
+          - "__SUPREME_DATA__"

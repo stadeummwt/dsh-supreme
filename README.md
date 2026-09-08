@@ -19,7 +19,7 @@ DSH Supreme adds governance — cost/risk policy, observability, benchmark evide
 | Upstream worktree | kept **pristine** — `UPSTREAM_CORE_MODIFIED = NO`, patch count `0` |
 | Toolchain | Node v24 (v24.19.0), pnpm 11.7.0, Bun 1.3.14 (bundler) |
 
-The upstream checkout at `/home/z/deepseek-harness` is **read-only** for this project. All Supreme code lives in project-owned paths under `dsh-supreme/`.
+The pinned upstream checkout is **read-only** for this project. It is resolved at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` → in-project `node_modules/.upstream/deepseek-harness` (kept inside `node_modules/` so bundler file crawls never traverse it). All Supreme code lives in project-owned paths.
 
 ## Frozen plugin scope
 
@@ -65,29 +65,33 @@ Performance              router decision ~0.02 ms / 1k iterations ·
 VERDICT                  COMPLETE (suite runner, per Spec §34)
 ```
 
-**Important honesty rule:** the real-loader path via `dsh-supreme/real/boot.mjs` is the **only** real-integration evidence. The Level-A lifecycle harness under `src/harness/cordis-mini` is a fixture that exercises plugin lifecycles; it **never** proves DSH compatibility and is never cited as such.
+**Important honesty rule:** the real-loader path via `real/boot.mjs` is the **only** real-integration evidence. The Level-A lifecycle harness under `src/harness/cordis-mini` is a fixture that exercises plugin lifecycles; it **never** proves DSH compatibility and is never cited as such.
 
 ## Quick start
 
-Prerequisites: Node ≥ 24, pnpm 11.7.0, Bun ≥ 1.3, and the pinned DSH checkout at `/home/z/deepseek-harness` (override with `DSH_UPSTREAM_ROOT`; project root defaults to `/home/z/my-project` via `SUPREME_PROJECT_ROOT`).
+Prerequisites: Node ≥ 24, pnpm 11.7.0 (upstream build), Bun ≥ 1.3. Commands below assume the repo root (`dsh-supreme/` as published; inside the companion Next.js workspace the suite auto-detects both layouts).
 
 ```bash
-# 1. Install workspace dependencies (project root)
-pnpm install
+# 1. Install dependencies
+bun install
 
-# 2. Build the pinned upstream libraries (official path; large-host heap cap applied via env)
-cd /home/z/deepseek-harness
-NODE_OPTIONS='--max-old-space-size=2048' pnpm build:lib
+# 2. Clone the pinned DSH upstream into the bundler-invisible in-project location
+mkdir -p node_modules/.upstream
+git clone https://github.com/deepseek-ai/deepseek-harness.git node_modules/.upstream/deepseek-harness
+git -C node_modules/.upstream/deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
 
-# 3. Bundle every Supreme plugin to dist/ (bun build loop, one ESM file per plugin)
-cd /home/z/my-project
+# 3. Build the pinned upstream libraries — official tsconfig graph, memory-batched
+#    per reference (one tsc -b over the 217-ref host graph needs ~4 GB headroom;
+#    the batched runner keeps each invocation under 2 GB)
+npm run build:upstream
+
+# 4. Bundle every Supreme plugin to dist/ (one ESM file per plugin; zod external)
 PLUGINS="supreme-policy supreme-observability supreme-benchmark supreme-router \
 supreme-verifier supreme-memory-policy supreme-workflow-policy \
 supreme-minimal-probe supreme-boot-probe supreme-gate-driver supreme-fake-llm"
 for p in $PLUGINS; do
-  NODE_OPTIONS='--max-old-space-size=2048' bun build \
-    dsh-supreme/src/plugins/$p/index.ts \
-    --outfile dsh-supreme/dist/plugins/$p/index.mjs \
+  bun build src/plugins/$p/index.ts \
+    --outfile dist/plugins/$p/index.mjs \
     --format esm --target node --external zod
 done
 ```
@@ -98,22 +102,22 @@ Each dist bundle externalizes only `zod` and Node builtins; `@deepseek-ai/cordis
 
 ```bash
 # Boot any composition through the REAL pinned DSH Loader and dispose cleanly.
-# --setup installs the profile under $DSH_HOME/profiles/<name>/ from dsh-supreme/config/.
-node dsh-supreme/real/boot.mjs --profile supreme-minimal --setup
-node dsh-supreme/real/boot.mjs --profile core         --setup
-node dsh-supreme/real/boot.mjs --profile standard     --setup
-node dsh-supreme/real/boot.mjs --profile supreme      --setup
-node dsh-supreme/real/boot.mjs --profile lab          --setup
+# --setup installs the profile under $DSH_HOME/profiles/<name>/ from config/.
+node real/boot.mjs --profile supreme-minimal --setup
+node real/boot.mjs --profile core         --setup
+node real/boot.mjs --profile standard     --setup
+node real/boot.mjs --profile supreme      --setup
+node real/boot.mjs --profile lab          --setup
 ```
 
-Each run prints one JSON result (`bootMs`, `disposeMs`, `services` presence map, gate results) and exits non-zero on any failure. Gate markers are appended under `dsh-supreme/data/real/` — see the [runbooks](./docs/runbooks/) for expected markers per profile.
+Each run prints one JSON result (`bootMs`, `disposeMs`, `services` presence map, gate results) and exits non-zero on any failure. Gate markers are appended under `data/real/` — see the [runbooks](./docs/runbooks/) for expected markers per profile.
 
 ### Suite execution
 
 ```bash
-bun run dsh-supreme/src/suite/cli.ts            # full suite incl. 5 real boots
-bun run dsh-supreme/src/suite/cli.ts --json     # machine-readable SuiteReport
-bun run dsh-supreme/src/suite/cli.ts --skip-real-boots   # Level A only (keyless)
+bun run suite            # full suite incl. 5 real boots
+bun run suite:json       # machine-readable SuiteReport
+bun run suite:keyless    # Level A only (no upstream required)
 ```
 
 The suite exits `0` only when every mandatory gate passes (`verdict: COMPLETE`). Any failure prints the exact blocking gates.
@@ -180,10 +184,13 @@ Implementation: `src/app/api/supreme/**` + `src/lib/supreme-suite.ts` (project a
 ## Directory layout
 
 ```text
-dsh-supreme/
+dsh-supreme/                      (repo root as published)
 ├── README.md                  ← this file
+├── VISION.md                  ← original v1 project vision (frozen architecture contract)
+├── CHANGELOG.md
 ├── AGENTS.md                  ← engineering rules for future agents
 ├── SOURCE-OF-TRUTH.md         ← upstream integrity record (historical + current)
+├── package.json               # suite/boot/build scripts (zod only runtime dep)
 ├── config/
 │   ├── supreme-minimal.cordis.yml   # bare-Loader probe gate
 │   ├── core.cordis.yml              # CORE composition
@@ -191,7 +198,8 @@ dsh-supreme/
 │   ├── supreme.cordis.yml           # SUPREME composition (all 7)
 │   └── lab.cordis.yml               # LAB composition (LAB-only overrides)
 ├── real/
-│   └── boot.mjs               # REAL DSH boot harness (Loader + root-fiber dispose)
+│   ├── boot.mjs               # REAL DSH boot harness (Loader + root-fiber dispose)
+│   └── build-batched.sh       # memory-batched official upstream build
 ├── dist/plugins/<name>/index.mjs    # bun-built ESM bundles loaded by the real Loader
 ├── data/
 │   ├── observability/observability.jsonl   # runtime metadata log

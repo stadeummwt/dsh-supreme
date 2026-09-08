@@ -9,16 +9,16 @@ Goal: a working environment for DSH Supreme: project dependencies, pinned upstre
 | Node.js | v24 (verified on v24.19.0; upstream engines `^22.19.0 \|\| >=24.0.0`) | `node --version` |
 | pnpm | 11.7.0 (upstream `packageManager`) | `pnpm --version` |
 | Bun | ≥ 1.3 (verified on 1.3.14) | `bun --version` |
-| Pinned DSH checkout | `/home/z/deepseek-harness` @ `d347e703908d0406b7a7ef80e3a0e594d86b2215` | see below |
+| Pinned DSH checkout | `<dsh-upstream-checkout>` @ `d347e703908d0406b7a7ef80e3a0e594d86b2215` | see below |
 
-Environment overrides (both optional): `SUPREME_PROJECT_ROOT` (default `/home/z/my-project`), `DSH_UPSTREAM_ROOT` (default `/home/z/deepseek-harness`), `DSH_HOME` (default `<project>/.dsh-home`).
+Environment overrides (both optional): `SUPREME_PROJECT_ROOT` (default `<project-root>`), `DSH_UPSTREAM_ROOT` (default `<dsh-upstream-checkout>`), `DSH_HOME` (default `<project>/.dsh-home`).
 
 ## 1. Verify the pinned upstream is intact
 
 ```bash
-git -C /home/z/deepseek-harness rev-parse HEAD
+git -C <dsh-upstream-checkout> rev-parse HEAD
 # expected: d347e703908d0406b7a7ef80e3a0e594d86b2215
-git -C /home/z/deepseek-harness status --porcelain
+git -C <dsh-upstream-checkout> status --porcelain
 # expected: (empty output — clean worktree)
 ```
 
@@ -27,7 +27,7 @@ If either check fails, stop. Never "fix" the upstream; see [rollback.md](./rollb
 ## 2. Install project dependencies
 
 ```bash
-cd /home/z/my-project
+cd <project-root>
 pnpm install
 ```
 
@@ -38,7 +38,7 @@ This installs the Next.js app dependencies and the `@deepseek-ai/*` packages (in
 The upstream must be built once (per checkout) so the official libraries exist:
 
 ```bash
-cd /home/z/deepseek-harness
+cd <dsh-upstream-checkout>
 NODE_OPTIONS='--max-old-space-size=2048' pnpm build:lib
 ```
 
@@ -47,7 +47,7 @@ NODE_OPTIONS='--max-old-space-size=2048' pnpm build:lib
 ## 4. Verify
 
 ```bash
-cd /home/z/my-project
+cd <project-root>
 bun run dsh-supreme/src/suite/cli.ts --skip-real-boots
 ```
 

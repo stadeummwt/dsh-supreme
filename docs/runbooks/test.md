@@ -50,4 +50,4 @@ Any boot runs standalone via `node dsh-supreme/real/boot.mjs --profile <name> --
 1. Blocking gate `UNIT:<name>` → the failed check ids print under the plugin line; reproduce the check in isolation via `--skip-real-boots`.
 2. Blocking gate `COMPOSITION:<profile>` → run that boot directly (`node dsh-supreme/real/boot.mjs --profile <profile> --setup`) and read the JSON output (`services`, `gates`, `disposeError`).
 3. `SECRET_SENTINEL_LEAKS` → locate the file from the scan paths; find the writer that failed to scrub before deleting the artifact (a leak indicates a code bug, not just dirty data).
-4. `UPSTREAM_*` → someone touched `/home/z/deepseek-harness`; see [rollback.md](./rollback.md).
+4. `UPSTREAM_*` → someone touched `<dsh-upstream-checkout>`; see [rollback.md](./rollback.md).
