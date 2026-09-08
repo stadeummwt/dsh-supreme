@@ -29,6 +29,27 @@ All notable changes to DSH Supreme are documented here.
   6. disposes cleanly via the root fiber.
   Verified result: `BUNDLE_E2E_COMPLETE` — bundles `[@deepseek-ai/dsh-base,
   dsh-supreme]`, 13 services mounted, boot ~0.9 s, dispose ~23 ms.
+- **`config/compositions/{core,standard,supreme,lab}.patch.yml`** — the four
+  v1 compositions as ready-made overlay fragments for bundle users (the
+  bundle-world analogue of manifest-driven install profiles). Each fragment
+  UPDATE-patches the bundle rows by id — whole-`config` replacement, and
+  `disabled: true` for rows outside the composition — and deliberately omits
+  `name` restatement (an update patch's name must match the installed row's
+  resolved name verbatim, which is install-location-dependent). Core=policy
+  only; standard=+observability/memory-policy/verifier; supreme=all seven
+  with the synthetic keyless router pair; lab=all seven + LAB-only overrides.
+- **`real/composition-verify.mjs`** (`bun run composition:verify`) — END-TO-END
+  proof of the fragments through the real install + boot path: per-composition
+  service presence AND absence assertions (disabled rows must not mount),
+  plus a write-through proof that the shipped relative `dataDir` default
+  lands records in `<cwd>/.supreme-data/observability/`. Verified result:
+  `COMPOSITIONS_E2E_COMPLETE` for all four compositions, upstream untouched.
+- **`research/ecc-dissection-2026-09.md`** — bedah of `affaan-m/ECC`
+  (253,948★): component-by-component relevance analysis for Supreme
+  (GateGuard hook profiles, AgentShield 6-surface audit, instinct confidence
+  policy, install-profiles manifest → the composition fragments here), an
+  improvement roadmap (dsh-market submission, awesome-dsh-plugin PR, JSON
+  schemas, v1.2 candidates), and positioning guidance.
 
 ### Usage
 

@@ -148,6 +148,42 @@ always beats bundle defaults. The four support/fixture plugins
 `supreme-fake-llm`) are NOT part of the bundle: they are test fixtures for the
 suite and never ship into user profiles.
 
+### Composition fragments (pick a profile in one line)
+
+The four v1 compositions ship as ready-made overlay fragments under
+[`config/compositions/`](./config/compositions/) — the bundle-world analogue
+of manifest-driven install profiles. Each fragment UPDATE-patches the bundle
+rows by id (whole-`config` replacement, `disabled: true` for rows outside the
+composition) and carries no `name` restatement, so it stays
+install-location-independent:
+
+| Fragment | Rows active |
+|---|---|
+| [`core.patch.yml`](./config/compositions/core.patch.yml) | policy only (governance floor) |
+| [`standard.patch.yml`](./config/compositions/standard.patch.yml) | policy · observability · memory-policy · verifier |
+| [`supreme.patch.yml`](./config/compositions/supreme.patch.yml) | all seven (+ synthetic keyless router candidates) |
+| [`lab.patch.yml`](./config/compositions/lab.patch.yml) | all seven + LAB overrides (allowPaid, command verifier) — never ship to production |
+
+```bash
+# as a one-line overlay (no file edits)…
+dsh --profile <your-profile> \
+  --patch "$DSH_HOME/profiles/<your-profile>/node_modules/dsh-supreme/config/compositions/supreme.patch.yml"
+# …or paste the fragment's rows into your profile's cordis.patch.yml (same
+# result: user layers apply after bundle layers, last write wins per id).
+```
+
+Prove all four compositions end-to-end (real CLI install → per-composition
+boot → service presence/absence → relative `dataDir` write-through):
+
+```bash
+bun run composition:verify   # verdict: COMPOSITIONS_E2E_COMPLETE
+```
+
+Notes: `dsh plugin add` requires `pnpm` on PATH; installing from GitHub works
+without a `prepare` build because `dist/` is committed. Fragment paths are
+relative to the dsh process working directory — override any row from your
+own patch layer.
+
 ## Architecture summary
 
 ```text

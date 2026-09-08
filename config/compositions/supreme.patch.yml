@@ -1,0 +1,85 @@
+# DSH Supreme v1.1 — SUPREME composition fragment (bundle users).
+#
+# Recomposes the seven bundle rows to the full SUPREME composition (Spec §16
+# + the Spec §30 keyless synthetic scenario): every plugin active, router
+# seeded with the synthetic free/paid candidate pair, PAID rejected by the
+# policy gate (executionClass SUPREME keeps allowPaid=false), verifier
+# command-capable=false. Drive gate scenarios from your own code against the
+# ctx services (the gate driver fixture is not part of the bundle).
+#
+# Patch semantics (vendor/include applyEntryPatches, the exact algorithm boot
+# uses): rows here are UPDATE patches — they target rows the bundle layer
+# inserted by `id`, replacing each row's whole `config`. They intentionally
+# carry NO `name`: an update patch's name must match the installed row's
+# resolved name verbatim, which is install-location-dependent, so restating
+# it here would be skipped.
+#
+# Apply with ONE of:
+#   1. overlay (no file edits):
+#      dsh --profile <name> --patch "$DSH_HOME/profiles/<name>/node_modules/dsh-supreme/config/compositions/supreme.patch.yml"
+#   2. copy the rows below into your profile's cordis.patch.yml (last write
+#      wins per row id).
+#
+# Paths are RELATIVE to the dsh process working directory. Override any row
+# from your own patch layer — user layers always win.
+#
+# The router candidates below are the SYNTHETIC demo pair (credential mode
+# config-owned, documented synthetic assumption). For production, replace
+# them from your own patch layer with YOUR providers — last write per row
+# replaces the whole config.
+
+- id: supreme-policy
+  config:
+    executionClass: SUPREME
+
+- id: supreme-observability
+  config:
+    dataDir: '.supreme-data/observability'
+
+- id: supreme-benchmark
+  config:
+    dataDir: '.supreme-data/benchmark'
+
+- id: supreme-fake-llm
+  config:
+    provider: synthetic-free
+
+- id: supreme-router
+  config:
+    candidates:
+      - provider: synthetic-free
+        credentialMode: config-owned
+        credentialConfigured: true
+        quotaHeadroom: 0.95
+        models:
+          - model: synthetic-mini
+            costClass: FREE_CONFIRMED
+            capabilities: [chat]
+            contextWindow: 32768
+            failureDomain: synthetic
+      - provider: synthetic-paid
+        credentialMode: config-owned
+        credentialConfigured: true
+        quotaHeadroom: 0.9
+        models:
+          - model: synthetic-paid-large
+            costClass: PAID
+            capabilities: [chat]
+            contextWindow: 131072
+            failureDomain: synthetic-paid
+
+- id: supreme-verifier
+  config:
+    allowedRoots:
+      - '.supreme-data'
+
+- id: supreme-memory-policy
+  config:
+    registerPromptSection: false
+    projectKnowledge:
+      - id: project-overview
+        text: 'DSH Supreme v1: seven host-side policy plugins composed on DeepSeek Harness.'
+        priority: 60
+
+- id: supreme-workflow-policy
+  config: {}

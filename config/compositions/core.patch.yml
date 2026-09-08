@@ -1,0 +1,44 @@
+# DSH Supreme v1.1 — CORE composition fragment (bundle users).
+#
+# The bundle's own cordis.patch.yml inserts all seven Supreme rows with safe
+# defaults. This fragment recomposes them to the CORE composition (Spec §16):
+# policy only — a clean DSH baseline with the Supreme governance floor.
+#
+# Patch semantics (vendor/include applyEntryPatches, the exact algorithm boot
+# uses): rows here are UPDATE patches — they target rows the bundle layer
+# inserted by `id`, replacing each row's whole `config` and/or setting
+# `disabled`. They intentionally carry NO `name`: an update patch's name must
+# match the installed row's resolved name verbatim, which is
+# install-location-dependent (the loader anchors bundle-relative names to
+# file:// URLs), so restating it here would break resolution or be skipped.
+#
+# Apply with ONE of:
+#   1. overlay (no file edits):
+#      dsh --profile <name> --patch "$DSH_HOME/profiles/<name>/node_modules/dsh-supreme/config/compositions/core.patch.yml"
+#   2. copy the rows below into your profile's cordis.patch.yml — it is applied
+#      after every bundle layer, so these rows win (last write per id).
+#
+# Fixture plugins (supreme-minimal-probe, supreme-boot-probe, supreme-gate-
+# driver) are NOT part of the bundle and are intentionally absent here.
+
+- id: supreme-policy
+  config:
+    executionClass: CORE
+
+- id: supreme-observability
+  disabled: true
+
+- id: supreme-benchmark
+  disabled: true
+
+- id: supreme-router
+  disabled: true
+
+- id: supreme-verifier
+  disabled: true
+
+- id: supreme-memory-policy
+  disabled: true
+
+- id: supreme-workflow-policy
+  disabled: true
