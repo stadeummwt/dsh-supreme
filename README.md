@@ -1,197 +1,232 @@
-# DSH SUPREME v1.2
+<div align="center">
+
+# 🛡️ DSH SUPREME
+
+### The governance layer for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+
+**Seven policy plugins · one bundle install · zero upstream patches · every claim executable**
+
+*"ECC gives your harness breadth. Supreme gives it a conscience."*
 
 [![CI](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml/badge.svg)](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml)
-![upstream](https://img.shields.io/badge/upstream-d347e703908d-blue)
-![suite](https://img.shields.io/badge/suite-COMPLETE-brightgreen)
-![patches](https://img.shields.io/badge/upstream%20patches-0-success)
+![suite](https://img.shields.io/badge/suite-61%2F61%20%E2%9C%94%205%2F5%20boots-brightgreen)
+![E2E](https://img.shields.io/badge/E2E-5%20verdicts%20green-success)
+![upstream](https://img.shields.io/badge/upstream-d347e703908d%20%7C%20patches%200-blue)
+![leaks](https://img.shields.io/badge/secret%20sentinel%20leaks-0-success)
+![schemas](https://img.shields.io/badge/JSON%20schemas-3%20published-8A2BE2)
+![bundle](https://img.shields.io/badge/dsh.bundle-v1.1%2B%20installable-FF6B35)
+![license](https://img.shields.io/badge/license-MIT-green)
 ![node](https://img.shields.io/badge/node-%E2%89%A524-green)
 
-**Seven host-side policy plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), composed through DSH's vendored Cordis runtime — installable as a [`dsh` bundle](#install-as-a-dsh-bundle-v11) since v1.1, with deterministic enforcement features (unicode-taint denial, RM0-first routing, surgical path scope, note ledger, reasoning-trace audit) since v1.2.**
+**Install** · `dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme`
 
-DSH Supreme adds governance — cost/risk policy, observability, benchmark evidence, model routing, deterministic verification, memory selection policy, and workflow limits — **without modifying a single line of the pinned upstream**. Every Supreme plugin is an ordinary Cordis plugin (`name` / `inject` / `Config` / `apply(ctx, config)`) that mounts next to the DSH core and consumes official DSH services and event seams.
+[Quick install](#-60-second-install) · [Why Supreme](#-why-supreme) · [The seven plugins](#-the-seven-governance-plugins) · [Proof wall](#-proof-wall--every-verdict-runnable) · [v1.2 features](#-v12-governance-features) · [Docs](#-documentation-map)
 
-> **Authoritative record:** [`SOURCE-OF-TRUTH.md`](./SOURCE-OF-TRUTH.md) records the build's upstream basis. The historical "upstream absent" gate recorded there was **unblocked** during Task 2: the real upstream was located, cloned, and pinned. See [Pinned upstream](#pinned-upstream) below — this README documents only behavior verified against that pin.
+</div>
 
 ---
 
-## Pinned upstream
+## 🤔 Why Supreme
 
-| Item | Value |
+DSH's plugin ecosystem (3,421 catalog entries reviewed, 2026-09) is rich in
+**single-domain tools** — a router here, a memory store there, a verifier
+somewhere else. Each solves one slice of governance and asks you to trust its
+output.
+
+**Supreme is the opposite design.** It is a full governance *stack* — cost
+policy, observability, routing, verification, memory policy, workflow limits,
+security audit — that treats **proof as a product feature**: every claim in
+this README maps to a command you can run, and every hard rule (deny paths,
+cost gates, secret scrubbing) is deterministic code, not model judgment.
+
+| The usual DSH plugin | DSH Supreme |
 |---|---|
-| Repository | `https://github.com/deepseek-ai/deepseek-harness` |
-| Pinned commit | `d347e703908d0406b7a7ef80e3a0e594d86b2215` (master, tag `dsh-v0.1.3-alpha.1`) |
-| DSH version | `0.1.3-alpha.1` |
-| Vendored Cordis | `4.0.2` (`vendor/cordis`) |
-| Upstream worktree | kept **pristine** — `UPSTREAM_CORE_MODIFIED = NO`, patch count `0` |
-| Toolchain | Node v24 (v24.19.0), pnpm 11.7.0, Bun 1.3.14 (bundler) |
+| Solves **one** domain | **Seven** governance domains, one install |
+| "Trust the output" | **Verdict gates** — `COMPLETE` only when every check passes |
+| Config verified by vibes | **Config-key hygiene scan** against real zod schemas (silent-strip trap closed) |
+| Markdown evidence | **Published JSON Schemas** + append-only JSONL evidence stores |
+| Touches core or monkey-patches | **Zero upstream patches** — pinned upstream, worktree clean, verified every run |
+| Security as a README paragraph | **Six-surface security audit** (prompts · hooks · MCP · permissions · secrets · agent files) in CI |
+| No ML dependency | Also **no ML** — deterministic counting, globs and comparisons only. Speed is a feature: router decision ≈ **0.02 ms / 1k iterations** |
 
-The pinned upstream checkout is **read-only** for this project. It is resolved at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` → in-project `node_modules/.upstream/deepseek-harness`. Prefer the sibling location: some upstream builds (pnpm + declaration emit) reject checkouts nested under a `node_modules` directory. All Supreme code lives in project-owned paths.
+> **The core rule of this repo:** *bukti sebenar > klaim* — real evidence over
+> claims. If a statement here can't be re-run by you, it's marked as a claim,
+> not a fact.
 
-## Frozen plugin scope
+---
 
-Exactly **seven Supreme policy plugins**. This scope is frozen (see [AGENTS.md](./AGENTS.md)); no new Supreme plugins may be added without a proven blocker.
+## ⚡ 60-second install
 
-| # | Plugin (directory) | Provided service | Purpose |
+The repository **is** a [`dsh` bundle](#-install-as-a-dsh-bundle) — no build
+step needed (`dist/` is committed):
+
+```bash
+dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
+```
+
+That mounts all **seven** plugins with safe production defaults:
+
+```text
+PAID / TRIAL routes  → DENIED (hard rule, LAB-only override)
+UNKNOWN cost class   → DENIED
+commands / network   → OFF by default
+router candidates    → you add yours in your own patch layer (last write wins)
+```
+
+Pick a **composition** in one more line if you don't need all seven:
+
+| Fragment | Active plugins | Use it for |
+|---|---|---|
+| [`core`](./config/compositions/core.patch.yml) | policy | governance floor on any profile |
+| [`standard`](./config/compositions/standard.patch.yml) | policy · observability · memory · verifier | daily-driver |
+| [`supreme`](./config/compositions/supreme.patch.yml) | all seven | full stack |
+| [`lab`](./config/compositions/lab.patch.yml) | all seven + LAB overrides | experiments only — never production |
+
+```bash
+dsh --profile <your-profile> \
+  --patch "$DSH_HOME/profiles/<your-profile>/node_modules/dsh-supreme/config/compositions/standard.patch.yml"
+```
+
+---
+
+## 🧩 The seven governance plugins
+
+Exactly seven. The scope is **frozen** ([AGENTS.md](./AGENTS.md)) — no scope
+creep without a proven blocker.
+
+| # | Plugin | Service | What it enforces |
 |---|---|---|---|
-| 1 | `supreme-policy` | `supremePolicy` | Cost-class / risk / delegation admission. UNKNOWN cost ⇒ DENY, hard rule. Paid/trial overrides are LAB-only. |
-| 2 | `supreme-observability` | `supremeObservability` | Append-only JSONL metadata log over official DSH event seams. Allowlisted fields, secret-sentinel scrub, fail-open. |
-| 3 | `supreme-benchmark` | `supremeBenchmark` | Reproducible task/run/score evidence as JSONL; per-model aggregation consumed by the router. |
-| 4 | `supreme-router` | `supremeRouter` | Deterministic route selection: 8 hard gates → normalized weighted scoring. No paid fallback. |
-| 5 | `supreme-verifier` | `supremeVerifier` | Deterministic validator registry (exact-text, regex, JSON, file, command). Evidence > model self-confidence. |
-| 6 | `supreme-memory-policy` | `supremeMemoryPolicy` | Memory *selection policy* only. DSH `ctx.sessions` stays canonical; NOOP long-term provider is a legitimate state. |
-| 7 | `supreme-workflow-policy` | `supremeWorkflowPolicy` | When/how `ctx.subagents` / `ctx.workflowEngine` may be used: limits, degradation ladder, `DENY_ALL` secret policy. |
+| 1 | [`supreme-policy`](./src/plugins/supreme-policy/) | `supremePolicy` | Cost-class / risk / delegation admission. `UNKNOWN` cost ⇒ **DENY**. Paid & trial overrides are LAB-only. Unicode-taint detection + denial. CoT presence gate. |
+| 2 | [`supreme-observability`](./src/plugins/supreme-observability/) | `supremeObservability` | Append-only JSONL metadata log over official DSH event seams. Allowlisted fields, **secret-sentinel scrub**, fail-open. |
+| 3 | [`supreme-benchmark`](./src/plugins/supreme-benchmark/) | `supremeBenchmark` | Reproducible task/run/score JSONL evidence; per-model aggregation that feeds the router; `commitHash` + `irVersion` provenance binding. |
+| 4 | [`supreme-router`](./src/plugins/supreme-router/) | `supremeRouter` | Deterministic selection: **8 hard gates** → weighted scoring → **RM0-first** cost-class rule → optional verifier-failure-driven effort pacing. |
+| 5 | [`supreme-verifier`](./src/plugins/supreme-verifier/) | `supremeVerifier` | Deterministic validator registry (exact-text · regex · JSON · file · command). **Evidence > model self-confidence.** |
+| 6 | [`supreme-memory-policy`](./src/plugins/supreme-memory-policy/) | `supremeMemoryPolicy` | Memory *selection policy*: confidence floor, injection cap, relevance ranking, bounded append-only note ledger (credential-bearing notes rejected at admission). |
+| 7 | [`supreme-workflow-policy`](./src/plugins/supreme-workflow-policy/) | `supremeWorkflowPolicy` | When/how `ctx.subagents` / `ctx.workflowEngine` may run: limits, degradation ladder, glob **path scoping** (blocked beats allowed), verifier-gated close for HIGH-risk tasks. |
 
-Four **support plugins** (not part of the frozen seven, fixture-classified, no model-facing tools):
+Four support plugins (`supreme-minimal-probe`, `supreme-boot-probe`,
+`supreme-gate-driver`, `supreme-fake-llm`) exist **only** as test fixtures for
+the suite — they never ship in the bundle.
 
-| Plugin | Role |
-|---|---|
-| `supreme-minimal-probe` | Task 2 real-loader gate: writes `MINIMAL_PLUGIN_LOAD` / `MINIMAL_PLUGIN_OBSERVABLE_EFFECT` / `MINIMAL_PLUGIN_DISPOSE` markers. |
-| `supreme-boot-probe` | Writes a `BOOT_PROBE` marker ~600 ms after activation listing which services exist in the real booted context. |
-| `supreme-gate-driver` | Runs the keyless synthetic end-to-end scenario and writes the 9 `SUPREME_GATES` results (supreme/lab compositions). |
-| `supreme-fake-llm` | LAB-only scripted LLM adapter (`synthetic-free`) registered through the official `ctx.llm.registerAdapter()` seam. |
+---
 
-## Verified status
+## 🏁 Proof wall — every verdict runnable
 
-Claims below are backed by executable gates. Re-run them with the suite (next section); do not trust prose.
+Don't trust this README. Run these:
+
+| Command | Verdict marker | What it proves |
+|---|---|---|
+| `bun run suite` | `COMPLETE` | **61/61** Level-A checks + **5/5** real-loader boots + v1.2 audit gates |
+| `bun run bundle:verify` | `BUNDLE_E2E_COMPLETE` | Real `dsh plugin add` → reconciler → boot → 13 services → user-patch override wins → clean dispose |
+| `bun run composition:verify` | `COMPOSITIONS_E2E_COMPLETE` | All 4 fragments: service presence **and absence**, relative `dataDir` write-through |
+| `bun run v12:verify` | `V12_E2E_COMPLETE` | Every v1.2 config key **arrives at its service** + functional probes (taint deny, effort escalation/recover, path scope, close gate, ledger) |
+| `bun run v3:verify` | `V3_CONFIG_REVIEW_EVIDENCE` | The silent-strip trap, live: a wrong config loses 5/6 keys → corrected config enforces 6/6 |
 
 ```text
 Level A unit checks      61/61 PASS   (policy 9 · observability 6 · benchmark 6 · router 13
                                        verifier 7 · memory 9 · workflow 11)
 Real-loader boots        5/5 PASS     (supreme-minimal, core, standard, supreme, lab)
   boot times             supreme-minimal ~55 ms · core/standard/supreme/lab ~750–1000 ms
-  dispose                ~20–30 ms, clean root-fiber unwind
-Keyless scenario         9/9 gates PASS in supreme + lab (real DSH session created;
-                         router selects synthetic free route; PAID candidate rejected
-                         by policy_cost)
-Security                 sentinel leaks = 0 · paid automatic fallback = DISABLED ·
-                         production configs never set allowPaid
+Keyless scenario         9/9 gates PASS (real DSH session; router picks free route; PAID rejected)
+Security                 sentinel leaks = 0 · paid automatic fallback = DISABLED
 v1.2 audit gates         config-key hygiene PASS · pinned-ref scan PASS ·
-                         six-surface audit PASS (prompts/hooks/mcp/permissions/secrets/
-                         agent_files) · schema contract PASS (3 published schemas)
-Bundle E2E               BUNDLE_E2E_COMPLETE (real CLI install, 13 services,
-                         user-patch override wins, upstream untouched)
-Compositions E2E         COMPOSITIONS_E2E_COMPLETE (4 fragments, presence+absence,
-                         relative dataDir write-through)
-Config-surface E2E       V3_CONFIG_REVIEW_EVIDENCE + V12_E2E_COMPLETE (every v1.2
-                         config key arrives at its service — no silent strip)
-Upstream integrity       commit unchanged, worktree clean, patches = 0
-Performance              router decision ~0.02 ms / 1k iterations ·
-                         observability serialize ~0.003 ms / 1k
-VERDICT                  COMPLETE (suite runner, per Spec §34)
+                         six-surface audit PASS · schema contract PASS (3 schemas)
+Upstream integrity       commit unchanged · worktree clean · patches = 0
+Performance              router ≈ 0.02 ms / 1k · observability serialize ≈ 0.003 ms / 1k
+VERDICT                  COMPLETE
 ```
 
-**Important honesty rule:** the real-loader path via `real/boot.mjs` is the **only** real-integration evidence. The Level-A lifecycle harness under `src/harness/cordis-mini` is a fixture that exercises plugin lifecycles; it **never** proves DSH compatibility and is never cited as such.
+**Honesty rule:** the real-loader path (`real/boot.mjs`) is the **only**
+real-integration evidence. The Level-A harness under `src/harness/cordis-mini`
+is a lifecycle fixture — it is **never** cited as DSH proof.
 
-## Quick start
+---
 
-Prerequisites: Node ≥ 24, pnpm 11.7.0 (upstream build), Bun ≥ 1.3. Commands below assume the repo root (`dsh-supreme/` as published; inside the companion Next.js workspace the suite auto-detects both layouts).
+## 🔐 Security guarantees
 
-```bash
-# 1. Install dependencies
-bun install
+| Guarantee | Mechanism | Proof |
+|---|---|---|
+| Secrets never leak through observability | Secret-sentinel scrub on allowlisted fields, fail-open write path | suite: `sentinelLeaks = 0` every run |
+| Tainted tool arguments can't dispatch | Unicode class scan (zero-width / bidi / BOM / tag) + `taintPolicy: DENY` via upstream `tools/pre-execute` | `V12_E2E_COMPLETE` functional probe |
+| Values never echoed in audit events | Taint events carry **class names only** | code + suite checks |
+| Paid models never fire by accident | `UNKNOWN` cost ⇒ DENY; `allowPaid` refused outside LAB; no automatic fallback | keyless scenario gate 9/9 |
+| Destructive delegation is scoped | `blockedPaths` > `allowedPaths` glob enforcement; `DENY_ALL` secret policy | suite checks 11 (workflow) |
+| HIGH-risk work can't skip verification | `requireVerifierPassOnClose` evidence gate | `V12_E2E_COMPLETE` probe |
+| Supply chain stays pinned | External refs scanned; upstream commit + `irVersion` bound into run records | pinned-ref scan PASS |
+| Your own audit, offline | **Six-surface audit**: prompts · hooks · MCP · permissions · secrets · agent files | suite check PASS |
 
-# 2. Clone the pinned DSH upstream (default lookup: sibling ../deepseek-harness;
-#    any location works via DSH_UPSTREAM_ROOT — avoid nesting it under node_modules)
-git clone https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
-git -C ../deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+---
 
-# 3. Build the pinned upstream libraries — official tsconfig graph, memory-batched
-#    per reference (one tsc -b over the 217-ref host graph needs ~4 GB headroom;
-#    the batched runner keeps each invocation under 2 GB)
-npm run build:upstream
+## 🧬 v1.2 governance features
 
-# 4. Bundle every Supreme plugin to dist/ (one ESM file per plugin; zod external)
-PLUGINS="supreme-policy supreme-observability supreme-benchmark supreme-router \
-supreme-verifier supreme-memory-policy supreme-workflow-policy \
-supreme-minimal-probe supreme-boot-probe supreme-gate-driver supreme-fake-llm"
-for p in $PLUGINS; do
-  bun build src/plugins/$p/index.ts \
-    --outfile dist/plugins/$p/index.mjs \
-    --format esm --target node --external zod
-done
-```
+Deterministic. No ML. No new runtime deps. Every feature binds to a **real
+pinned upstream seam** and ships with engine checks + boot-level proof
+(`bun run v12:verify`).
 
-Each dist bundle externalizes only `zod` and Node builtins; `@deepseek-ai/cordis` appears solely as erased type imports. This exact command was verified to reproduce the committed `dist/plugins/supreme-policy/index.mjs` byte-for-byte.
+### supreme-policy — unicode taint denial + CoT presence gate
 
-### Real boot (the only real-integration evidence)
-
-```bash
-# Boot any composition through the REAL pinned DSH Loader and dispose cleanly.
-# --setup installs the profile under $DSH_HOME/profiles/<name>/ from config/.
-node real/boot.mjs --profile supreme-minimal --setup
-node real/boot.mjs --profile core         --setup
-node real/boot.mjs --profile standard     --setup
-node real/boot.mjs --profile supreme      --setup
-node real/boot.mjs --profile lab          --setup
-```
-
-Each run prints one JSON result (`bootMs`, `disposeMs`, `services` presence map, gate results) and exits non-zero on any failure. Gate markers are appended under `data/real/` — see the [runbooks](./docs/runbooks/) for expected markers per profile.
-
-### Suite execution
-
-```bash
-bun run suite            # full suite incl. 5 real boots (needs the built upstream)
-bun run suite:json       # machine-readable SuiteReport
-bun run suite:keyless    # Level A only — runs without the upstream; verdict stays
-                         # PARTIAL (REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE)
-```
-
-The suite exits `0` only when every mandatory gate passes (`verdict: COMPLETE`). Any failure prints the exact blocking gates.
-
-## v1.2 governance features (deterministic, no ML, no new deps)
-
-Every feature binds to a REAL pinned upstream seam and ships with engine checks plus boot-level proof (`bun run v12:verify`).
-
-### supreme-policy — unicode taint denial + chain-of-thought presence gate
-
-Upstream freezes tool arguments after logging (`wrappers may change only exec.signal`), so the enforceable host-side posture is **detect → audit → deny** through the official `tools/pre-execute` seam (`{ kind: 'deny', reason }` materializes an upstream error result — policy never fabricates tool output):
+Upstream freezes tool arguments after logging (wrappers may change only
+`exec.signal`), so the enforceable host-side posture is **detect → audit →
+deny** through the official `tools/pre-execute` seam (`{ kind: 'deny',
+reason }` — upstream materializes the error result; Supreme never fabricates
+tool output):
 
 | Config key | Default | Meaning |
 |---|---|---|
 | `enableUnicodeSanitization` | `true` | scan tool arguments for zero-width / bidi-isolate / bidi-override / tag codepoints (U+200B–200F, U+2060–206F, U+202A–202E, U+FEFF, U+E0000–E007F) |
-| `logTaintAttempts` | `true` | record `taint_detected` observability events — class names only, values are NEVER echoed |
+| `logTaintAttempts` | `true` | record `taint_detected` events — class names only, values are NEVER echoed |
 | `taintPolicy` | `LOG_ONLY` | `DENY` refuses the call before dispatch |
-| `reasoningTracePolicy` | `OFF` | `AUDIT` records `cot_missing` when an assistant message carried no reasoning trace; `ENFORCE` additionally denies that session's tool calls (evidence source: pinned `assistant/message` reasoning blocks + reasoning-chunks stream records; `ENFORCE` is refused on the CORE floor) |
+| `reasoningTracePolicy` | `OFF` | `AUDIT` records `cot_missing` when an assistant message carried no reasoning trace; `ENFORCE` additionally denies that session's tool calls (`ENFORCE` refused on the CORE floor) |
 
-### supreme-router — RM0-first + deterministic effort pacing
+### supreme-router — RM0-first + effort pacing
 
 | Config key | Default | Meaning |
 |---|---|---|
-| `costFirst` | `true` | among eligible candidates, score only the cheapest cost class (`FREE_CONFIRMED` beats a rate-limited peer with better benchmark history). Hard-gate evidence for ALL candidates is preserved; set `false` for pure weighted scoring |
-| `effortPacing.enabled` | `false` | deterministic `costClass → reasoningEffort` mapping over the pinned `agent/request` seam (`LlmCallConfig.reasoningEffort` may be overridden upstream). Levels are the pinned DeepSeek adapter set: `off / low / high / max` |
-| `effortPacing.escalateOnVerifierFail` | `true` | one-step escalation (`low → high`) driven ONLY by verifier FAIL evidence via `reportVerifierOutcome()` — never model self-confidence; a PASS recovers |
+| `costFirst` | `true` | score only the cheapest eligible cost class — `FREE_CONFIRMED` beats a rate-limited peer with better history; hard-gate evidence for ALL candidates preserved |
+| `effortPacing.enabled` | `false` | deterministic `costClass → reasoningEffort` mapping over the pinned `agent/request` seam (pinned DeepSeek levels: `off / low / high / max`) |
+| `effortPacing.escalateOnVerifierFail` | `true` | one-step escalation (`low → high`) driven **only** by verifier FAIL evidence via `reportVerifierOutcome()` — never model self-confidence; PASS recovers |
 
 ### supreme-workflow-policy — surgical path scope + verifier-gated close
 
 | Config key | Default | Meaning |
 |---|---|---|
-| `allowedPaths` / `blockedPaths` | `[]` / `[]` | zero-dependency glob scope for delegations (`**` crosses segments, `*`/`?` stay in-segment); `blockedPaths` always win; empty allowlist = unrestricted |
-| `requireVerifierPassOnClose` | `false` | HIGH-risk tasks may only close with recorded verifier PASS evidence — the honest posture for STANDARD (where the verifier cannot execute commands) |
+| `allowedPaths` / `blockedPaths` | `[]` / `[]` | zero-dependency glob scope for delegations (`**` crosses segments, `*`/`?` stay in-segment); **blocked always wins**; empty allowlist = unrestricted |
+| `requireVerifierPassOnClose` | `false` | HIGH-risk tasks may only close with recorded verifier PASS evidence |
 
-### supreme-memory-policy — bounded note ledger + instinct-style injection gates
+### supreme-memory-policy — bounded ledger + instinct-style gates
 
 | Config key | Default | Meaning |
 |---|---|---|
-| `ledgerEnabled` | `false` | opt-in bounded, append-only JSONL note ledger (`ledgerDir`, `ledgerFileName`, `ledgerMaxEntries`) — credential-bearing notes are rejected at admission |
-| `minConfidence` | `0.7` | notes below this confidence never inject (ECC instincts analogue — recorded evidence quality, not model self-assessment) |
-| `maxInjected` | `6` | hard cap on injected notes per selection |
-| `relevanceRanking` | `true` | deterministic task-token-overlap ranking before priority (no ML, no ANN — counting) |
+| `ledgerEnabled` | `false` | opt-in bounded, append-only JSONL note ledger (`ledgerDir`, `ledgerFileName`, `ledgerMaxEntries`) — credential-bearing notes rejected at admission |
+| `minConfidence` | `0.7` | notes below this confidence never inject (ECC instincts analogue — recorded evidence quality, not self-assessment) |
+| `maxInjected` | `6` | hard cap per selection |
+| `relevanceRanking` | `true` | deterministic task-token-overlap ranking before priority (counting, not ANN) |
 
 ### supreme-benchmark — provenance binding
 
-Run records accept `commitHash` (40-hex sha or `UNAVAILABLE`) and `irVersion` — malformed values are rejected by record validation, so routing evidence stays bound to the code that produced it.
+Run records accept `commitHash` (40-hex sha or `UNAVAILABLE`) and `irVersion`
+— malformed values are rejected by validation, so routing evidence stays bound
+to the code that produced it.
 
-### Published schemas + six-surface audit
+### Published schemas + audit suite
 
-- [`schemas/suite-report.schema.json`](./schemas/suite-report.schema.json), [`schemas/benchmark-record.schema.json`](./schemas/benchmark-record.schema.json), [`schemas/ledger-note.schema.json`](./schemas/ledger-note.schema.json) — third parties can validate reports/records; a suite check keeps the schemas and the code from drifting.
-- The suite now also runs a **config-key hygiene** scan (every shipped YAML row validated against the plugin's real zod schema — the silent-strip trap stays closed), a **pinned-ref** scan (external references must be pinned), and the **six-surface security audit** (prompts · hooks · mcp · permissions · secrets · agent_files — the offline AgentShield analogue).
-- v1.2 fix: running `bun run suite` from INSIDE `dsh-supreme/` no longer fakes `UPSTREAM_CHECKOUT_UNAVAILABLE` (root resolution order fixed).
+- [`schemas/suite-report.schema.json`](./schemas/suite-report.schema.json) ·
+  [`benchmark-record.schema.json`](./schemas/benchmark-record.schema.json) ·
+  [`ledger-note.schema.json`](./schemas/ledger-note.schema.json) — third
+  parties can validate reports/records; a suite check keeps schemas and code
+  from drifting.
+- Suite also runs **config-key hygiene** (every shipped YAML row validated
+  against the plugin's real zod schema — the silent-strip trap stays closed),
+  **pinned-ref** scan, and the **six-surface security audit**.
 
-## Install as a dsh bundle (v1.1)
+---
+
+## 📦 Install as a dsh bundle
 
 The repository IS the bundle: `package.json` declares `dsh.bundle.patch` →
-[`cordis.patch.yml`](./cordis.patch.yml), which inserts the seven frozen plugins
-as profile rows. Any profile can adopt Supreme through the official plugin flow:
+[`cordis.patch.yml`](./cordis.patch.yml), which inserts the seven frozen
+plugins as profile rows. Any profile can adopt Supreme through the official
+plugin flow:
 
 ```bash
 # from a local checkout…
@@ -199,74 +234,35 @@ dsh plugin --profile <your-profile> add /path/to/dsh-supreme
 # …or straight from GitHub
 dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
 
-# prove an install end-to-end (runs the real CLI install + boot + layering checks)
+# prove an install end-to-end (real CLI install + boot + layering checks)
 bun run bundle:verify
-# prove the v1.2 config surface end-to-end (real CLI install + every v1.2 key + functional probes)
+# prove the v1.2 config surface end-to-end
 bun run v12:verify
 ```
 
-The bundle mounts the seven plugins with safe production defaults
-(PAID/TRIAL denied, commands/network off, zero router candidates). Extend
+The bundle mounts the seven plugins with **safe production defaults** (PAID /
+TRIAL denied, commands/network off, zero router candidates). Extend
 candidates, project knowledge, and workflow limits from YOUR profile patch
 layer — the composer applies `last write wins` per row id, so user config
-always beats bundle defaults. The four support/fixture plugins
-(`supreme-minimal-probe`, `supreme-boot-probe`, `supreme-gate-driver`,
-`supreme-fake-llm`) are NOT part of the bundle: they are test fixtures for the
-suite and never ship into user profiles.
+always beats bundle defaults. The four support/fixture plugins are NOT part of
+the bundle: they never ship into user profiles.
 
-### Composition fragments (pick a profile in one line)
-
-The four v1 compositions ship as ready-made overlay fragments under
+**Composition fragments** ship under
 [`config/compositions/`](./config/compositions/) — the bundle-world analogue
 of manifest-driven install profiles. Each fragment UPDATE-patches the bundle
 rows by id (whole-`config` replacement, `disabled: true` for rows outside the
 composition) and carries no `name` restatement, so it stays
-install-location-independent:
-
-| Fragment | Rows active |
-|---|---|
-| [`core.patch.yml`](./config/compositions/core.patch.yml) | policy only (governance floor) |
-| [`standard.patch.yml`](./config/compositions/standard.patch.yml) | policy · observability · memory-policy · verifier |
-| [`supreme.patch.yml`](./config/compositions/supreme.patch.yml) | all seven (+ synthetic keyless router candidates) |
-| [`lab.patch.yml`](./config/compositions/lab.patch.yml) | all seven + LAB overrides (allowPaid, command verifier) — never ship to production |
-
-```bash
-# as a one-line overlay (no file edits)…
-dsh --profile <your-profile> \
-  --patch "$DSH_HOME/profiles/<your-profile>/node_modules/dsh-supreme/config/compositions/supreme.patch.yml"
-# …or paste the fragment's rows into your profile's cordis.patch.yml (same
-# result: user layers apply after bundle layers, last write wins per id).
-```
-
-Prove all four compositions end-to-end (real CLI install → per-composition
-boot → service presence/absence → relative `dataDir` write-through):
-
-```bash
-bun run composition:verify   # verdict: COMPOSITIONS_E2E_COMPLETE
-```
+install-location-independent. Prove all four end-to-end:
+`bun run composition:verify` → `COMPOSITIONS_E2E_COMPLETE`.
 
 Notes: `dsh plugin add` requires `pnpm` on PATH; installing from GitHub works
 without a `prepare` build because `dist/` is committed. Fragment paths are
 relative to the dsh process working directory — override any row from your
 own patch layer.
 
-## Distribution (manual, owner-driven)
+---
 
-Repo policy: **no pull requests are opened on third-party repositories on
-the owner's behalf.** Prepared submission artifacts live in
-[`distribution/`](./distribution/):
-
-- `awesome-dsh-entry.yml` — catalog-ready entry (single file, category
-  `security`, validator-conformant keys only).
-- `SUBMISSION-GUIDE.md` — how listing on dsh-market actually works (it
-  auto-feeds from the awesome-dsh-plugin catalog), the pre-flight gate
-  checklist, the exact manual submission commands, and the npm-publish note.
-
-The GitHub repo already carries the `dsh-plugin` topic and a `dsh.bundle`
-manifest, so the only remaining step for listing is the manual one-file PR
-the owner chooses to make.
-
-## Architecture summary
+## 🏗️ Architecture
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
@@ -293,14 +289,32 @@ the owner chooses to make.
 **Dependency direction (acyclic, enforced):**
 
 ```text
-DSH core services  →  Supreme plugins        (injected seams)
-supremePolicy      →  verifier, router, workflow-policy
-supremeObservability → router, verifier (optional), workflow-policy
-supremeBenchmark   →  router                 (router reads history; benchmark NEVER depends on router)
-supremeVerifier    →  workflow-policy        (verification evidence consulted)
+DSH core services    →  Supreme plugins        (injected seams)
+supremePolicy        →  verifier, router, workflow-policy
+supremeObservability →  router, verifier (optional), workflow-policy
+supremeBenchmark     →  router                 (router reads history; benchmark NEVER depends on router)
+supremeVerifier      →  workflow-policy        (verification evidence consulted)
 ```
 
-Compositions mount subsets per execution profile (`config/*.cordis.yml`):
+### Pinned upstream
+
+| Item | Value |
+|---|---|
+| Repository | `https://github.com/deepseek-ai/deepseek-harness` |
+| Pinned commit | `d347e703908d0406b7a7ef80e3a0e594d86b2215` (master, tag `dsh-v0.1.3-alpha.1`) |
+| DSH version | `0.1.3-alpha.1` |
+| Vendored Cordis | `4.0.2` (`vendor/cordis`) |
+| Upstream worktree | kept **pristine** — `UPSTREAM_CORE_MODIFIED = NO`, patch count `0` |
+| Toolchain | Node v24 (v24.19.0), pnpm 11.7.0, Bun 1.3.14 (bundler) |
+
+The pinned upstream checkout is **read-only** for this project. It is resolved
+at runtime: `DSH_UPSTREAM_ROOT` env override → sibling `../deepseek-harness` →
+in-project `node_modules/.upstream/deepseek-harness`. Prefer the sibling
+location: some upstream builds (pnpm + declaration emit) reject checkouts
+nested under a `node_modules` directory. All Supreme code lives in
+project-owned paths.
+
+### Compositions (profiles)
 
 | Profile | Bundle | Mounted Supreme plugins |
 |---|---|---|
@@ -310,11 +324,81 @@ Compositions mount subsets per execution profile (`config/*.cordis.yml`):
 | `supreme` | `@deepseek-ai/dsh-base` | all 7 + fake-llm + gate-driver (SUPREME policy) |
 | `lab` | `@deepseek-ai/dsh-base` | all 7 + fake-llm + gate-driver, LAB-only overrides (`allowPaid: true`, `allowCommands: true`, `maxConcurrentAgents: 4`) |
 
-Full layer map and the verified real-API evidence table: [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md).
+Full layer map + verified real-API evidence table:
+[`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md).
 
-## HTTP API (dashboard projection — dev/LAB only)
+---
 
-The Next.js app exposes a thin, read-mostly projection over the suite. It owns **no runtime state**; runs live in an in-memory store (latest 20 runs) and suite execution is disabled in production (`NODE_ENV=production` returns `403` unless `SUPREME_ENABLE_SUITE=1`).
+## 🚀 Build & verify from source
+
+Prerequisites: Node ≥ 24, pnpm 11.7.0 (upstream build), Bun ≥ 1.3. Commands
+assume the repo root (`dsh-supreme/` as published; inside the companion
+Next.js workspace the suite auto-detects both layouts).
+
+```bash
+# 1. Install dependencies
+bun install
+
+# 2. Clone the pinned DSH upstream (default lookup: sibling ../deepseek-harness;
+#    any location works via DSH_UPSTREAM_ROOT — avoid nesting it under node_modules)
+git clone https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+git -C ../deepseek-harness checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+# 3. Build the pinned upstream libraries — official tsconfig graph, memory-batched
+#    (one tsc -b over the 217-ref host graph needs ~4 GB headroom; the batched
+#    runner keeps each invocation under 2 GB)
+npm run build:upstream
+
+# 4. Bundle every Supreme plugin to dist/ (one ESM file per plugin; zod external)
+PLUGINS="supreme-policy supreme-observability supreme-benchmark supreme-router \
+supreme-verifier supreme-memory-policy supreme-workflow-policy \
+supreme-minimal-probe supreme-boot-probe supreme-gate-driver supreme-fake-llm"
+for p in $PLUGINS; do
+  bun build src/plugins/$p/index.ts \
+    --outfile dist/plugins/$p/index.mjs \
+    --format esm --target node --external zod
+done
+```
+
+Each dist bundle externalizes only `zod` and Node builtins; `@deepseek-ai/cordis`
+appears solely as erased type imports. This exact command was verified to
+reproduce the committed `dist/plugins/supreme-policy/index.mjs` byte-for-byte.
+
+### Real boot (the only real-integration evidence)
+
+```bash
+# Boot any composition through the REAL pinned DSH Loader and dispose cleanly.
+# --setup installs the profile under $DSH_HOME/profiles/<name>/ from config/.
+node real/boot.mjs --profile supreme-minimal --setup
+node real/boot.mjs --profile core         --setup
+node real/boot.mjs --profile standard     --setup
+node real/boot.mjs --profile supreme      --setup
+node real/boot.mjs --profile lab          --setup
+```
+
+Each run prints one JSON result (`bootMs`, `disposeMs`, `services` presence
+map, gate results) and exits non-zero on any failure. Gate markers are
+appended under `data/real/` — see the [runbooks](./docs/runbooks/) for
+expected markers per profile.
+
+### Suite execution
+
+```bash
+bun run suite            # full suite incl. 5 real boots (needs the built upstream)
+bun run suite:json       # machine-readable SuiteReport
+bun run suite:keyless    # Level A only — runs without the upstream; verdict stays
+                         # PARTIAL (REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE)
+```
+
+The suite exits `0` only when every mandatory gate passes (`verdict:
+COMPLETE`). Any failure prints the exact blocking gates.
+
+### HTTP API (dashboard projection — dev/LAB only)
+
+The Next.js app exposes a thin, read-mostly projection over the suite. It owns
+**no runtime state**; runs live in an in-memory store (latest 20 runs) and
+suite execution is disabled in production (`NODE_ENV=production` returns `403`
+unless `SUPREME_ENABLE_SUITE=1`).
 
 | Endpoint | Method | Behavior |
 |---|---|---|
@@ -323,9 +407,30 @@ The Next.js app exposes a thin, read-mostly projection over the suite. It owns *
 | `/api/supreme/suite/run` | POST | Executes the full suite (including 5 real boots). **dev/LAB only** — `403` in production without `SUPREME_ENABLE_SUITE=1`. |
 | `/api/supreme/suite/runs/:id` | GET | One run record (`runId`, `startedAt`, `durationMs`, full report); `404` for unknown ids. |
 
-Implementation: `src/app/api/supreme/**` + `src/lib/supreme-suite.ts` (project app, outside `dsh-supreme/`).
+Implementation: `src/app/api/supreme/**` + `src/lib/supreme-suite.ts`
+(project app, outside `dsh-supreme/`).
 
-## Directory layout
+---
+
+## 📤 Distribution (manual, owner-driven)
+
+Repo policy: **no pull requests are opened on third-party repositories on the
+owner's behalf.** Prepared submission artifacts live in
+[`distribution/`](./distribution/):
+
+- `awesome-dsh-entry.yml` — catalog-ready entry (single file, category
+  `security`, validator-conformant keys only).
+- `SUBMISSION-GUIDE.md` — how listing on dsh-market actually works (it
+  auto-feeds from the awesome-dsh-plugin catalog), the pre-flight gate
+  checklist, the exact manual submission commands, and the npm-publish note.
+
+The GitHub repo already carries the `dsh-plugin` topic and a `dsh.bundle`
+manifest, so the only remaining step for listing is the manual one-file PR the
+owner chooses to make.
+
+---
+
+## 📁 Directory layout
 
 ```text
 dsh-supreme/                      (repo root as published)
@@ -343,7 +448,9 @@ dsh-supreme/                      (repo root as published)
 │   ├── core.cordis.yml              # CORE composition
 │   ├── standard.cordis.yml          # STANDARD composition
 │   ├── supreme.cordis.yml           # SUPREME composition (all 7)
-│   └── lab.cordis.yml               # LAB composition (LAB-only overrides)
+│   ├── lab.cordis.yml               # LAB composition (LAB-only overrides)
+│   ├── examples/                    # corrected config example (provenance noted)
+│   └── compositions/                # 4 overlay fragments (core/standard/supreme/lab)
 ├── distribution/                    # manual submission artifacts (no auto-PRs)
 │   ├── awesome-dsh-entry.yml        # catalog entry draft (one file)
 │   └── SUBMISSION-GUIDE.md          # owner-driven listing walkthrough
@@ -365,7 +472,8 @@ dsh-supreme/                      (repo root as published)
 │   │   ├── supreme-router/  supreme-verifier/  supreme-memory-policy/
 │   │   ├── supreme-workflow-policy/
 │   │   └── supreme-minimal-probe/  supreme-boot-probe/  supreme-gate-driver/  supreme-fake-llm/
-│   ├── suite/                 # runner.ts + cli.ts + engine-checks.ts + harness.ts
+│   ├── suite/                 # runner.ts + cli.ts + engine-checks.ts + config-hygiene.ts
+│   │                          # + surface-audit.ts + schema-contract.ts + harness.ts
 │   └── harness/cordis-mini/   # Level-A lifecycle FIXTURE only (never cited as DSH proof)
 └── docs/
     ├── architecture/ARCHITECTURE.md
@@ -373,7 +481,9 @@ dsh-supreme/                      (repo root as published)
     └── runbooks/              # install, build, test, boot-*, upgrade-pinned-dsh, rollback
 ```
 
-## Documentation map
+---
+
+## 📖 Documentation map
 
 | Doc | Contents |
 |---|---|
@@ -381,4 +491,75 @@ dsh-supreme/                      (repo root as published)
 | [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) | Layer map, verified real-API evidence table, event seams, composition layering |
 | [`docs/decisions/`](./docs/decisions/) | ADR-0000 (fixture history) + ADR-0001…0007 (one per major decision) |
 | [`docs/runbooks/`](./docs/runbooks/) | install, build, test, boot-core/standard/supreme/lab, upgrade-pinned-dsh, rollback |
+| [`research/`](./research/) | ECC dissection (253,948★) + v3 plan review — the data behind the v1.2 roadmap |
+| [`SOURCE-OF-TRUTH.md`](./SOURCE-OF-TRUTH.md) | Upstream integrity record (historical + current) |
 | Per-plugin READMEs | `src/plugins/<name>/README.md` — purpose, config tables, contracts, security boundaries |
+| [`CHANGELOG.md`](./CHANGELOG.md) | Version history with evidence markers per release |
+
+---
+
+## ❓ FAQ
+
+**Q: Does Supreme modify DeepSeek Harness?**
+No. The pinned upstream worktree stays pristine — `UPSTREAM_CORE_MODIFIED =
+NO`, patch count `0`, re-verified on every suite run. Supreme is an ordinary
+Cordis plugin layer that consumes official services and event seams.
+
+**Q: Is any of this AI-powered?**
+None. Every gate is deterministic code — counting, glob matching, string
+comparison, zod validation. That's why the router decides in ~0.02 ms and why
+results are reproducible on your machine, today.
+
+**Q: Why does `UNKNOWN` cost deny the model?**
+Because an unclassified route is an unaudited spend path. `supreme-policy`
+treats it as a hard DENY; paid/trial classes require an explicit LAB-only
+override. RM0-first routing then prefers `FREE_CONFIRMED` candidates
+deterministically.
+
+**Q: Can I use just the policy plugin?**
+Yes — that's the [`core`](./config/compositions/core.patch.yml) fragment. Or
+[`standard`](./config/compositions/standard.patch.yml) for the daily-driver
+four. Fragments are one-line overlays on your own profile.
+
+**Q: What if my config has a typo or an unknown key?**
+The v1.2 suite runs a **config-key hygiene** scan: every shipped YAML row is
+validated against the plugin's real zod schema, so the "boot passes but your
+governance keys were silently stripped" trap (proven live in
+`V3_CONFIG_REVIEW_EVIDENCE`) stays closed.
+
+**Q: Does it work offline / air-gapped?**
+The six-surface audit, taint scanning, ledger and all suite checks are fully
+offline and deterministic. Real boots need the pinned upstream checked out
+locally — no network calls at runtime.
+
+**Q: Why isn't Supreme listed in the dsh-market yet?**
+Listing requires a one-file PR to the catalog, and this repo's policy is that
+such PRs are made by the owner, manually (see
+[`distribution/SUBMISSION-GUIDE.md`](./distribution/SUBMISSION-GUIDE.md)).
+Everything else is already prepared.
+
+---
+
+## 📜 Honest limitations
+
+- The real-loader path via `real/boot.mjs` is the **only** real-integration
+  evidence; the Level-A lifecycle harness (`src/harness/cordis-mini`) is a
+  fixture and is never cited as DSH proof.
+- Keyless suite verdict is honestly `PARTIAL` (`REAL_BOOT_SKIPPED`) without a
+  built pinned upstream — it does not fake completeness.
+- Deferred items (documented, not forgotten): HNSW-style memory indexing and
+  Archify-style schema migration stay out of scope for the frozen seven.
+- Router candidates ship empty (zero-by-default): you add models from your own
+  patch layer. Supreme governs choices; it does not preselect providers.
+
+---
+
+<div align="center">
+
+**Built proof-first. *Bukti sebenar > klaim.***
+
+If Supreme hardened your harness, consider starring the repo — it helps other DSH users find governance tooling.
+
+[⬆ back to top](#️-dsh-supreme)
+
+</div>

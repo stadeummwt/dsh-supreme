@@ -1,6 +1,6 @@
 {
   "name": "dsh-supreme",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Seven host-side policy plugins for DeepSeek Harness, composed through DSH's vendored Cordis runtime. Installable as a dsh bundle: dsh plugin --profile <name> add <this package>. Pinned upstream: deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215.",
   "license": "MIT",
   "type": "module",

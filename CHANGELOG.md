@@ -2,6 +2,30 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.2.2 — README overhaul (showcase-grade, evidence-bound)
+
+Full README redesign for ecosystem presentation. **No code changes** —
+plugins, suite verdicts and E2E evidence are untouched from 1.2.1.
+
+### Changed
+
+- New hero section (centered badge wall, positioning line, anchor nav) +
+  "Why Supreme" positioning table grounded in the 2026-09 ecosystem research
+  (3,421 catalog entries reviewed; single-domain tools vs full-stack
+  governance with executable proof).
+- "60-second install" section up front: one-line bundle install + safe
+  defaults + one-line composition fragments.
+- **Proof wall**: all five runnable verdict commands mapped to what each
+  proves (every referenced script + verdict marker verified present in
+  `real/` and `package.json`).
+- New **Security guarantees** table (guarantee → mechanism → proof), **FAQ**,
+  expanded **Honest limitations** (incl. deferred HNSW/Archify, zero-by-default
+  router candidates).
+- Directory layout updated (compositions/, examples/, suite v1.2 modules);
+  documentation map now lists `research/` and `CHANGELOG.md`.
+- Reorganized: pinned upstream + compositions under Architecture; build &
+  verify instructions consolidated under "Build & verify from source".
+
 ## 1.2.1 — distribution policy correction (manual, owner-driven)
 
 Correction release: a listing PR (#4686) had been opened against
