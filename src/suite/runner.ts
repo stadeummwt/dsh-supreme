@@ -64,6 +64,9 @@ function resolveRoots(): { PROJECT_ROOT: string; SUPREME_ROOT: string } {
   for (let i = 0; i < 6 && dir && !isSupremeRoot(dir); i++) dir = dirname(dir);
   if (isSupremeRoot(dir)) {
     const parent = dirname(dir);
+    // NOTE: self-match here (join(parent,'dsh-supreme') === dir) is the legit
+    // monorepo signature — do NOT exclude it. The published-layout CI case is
+    // handled in resolveDshRoot via SUPREME_ROOT-relative candidates instead.
     const monorepo = existsSync(join(parent, 'dsh-supreme'));
     return { PROJECT_ROOT: monorepo ? parent : dir, SUPREME_ROOT: dir };
   }
@@ -82,12 +85,20 @@ const roots = resolveRoots();
 /** Portable upstream resolution: env override, else sibling checkout of the pin,
  *  else in-project checkouts (<root>/upstream or <root>/node_modules/.upstream —
  *  the latter stays invisible to bundler crawls). */
-function resolveDshRoot(projectRoot: string): string {
+function resolveDshRoot(projectRoot: string, supremeRoot: string): string {
   if (process.env.DSH_UPSTREAM_ROOT) return process.env.DSH_UPSTREAM_ROOT;
   const candidates = [
     join(projectRoot, '..', 'deepseek-harness'),
     join(projectRoot, 'upstream', 'deepseek-harness'),
     join(projectRoot, 'node_modules', '.upstream', 'deepseek-harness'),
+    // SUPREME_ROOT-relative candidates: in a published-layout CI checkout
+    // (<ws>/dsh-supreme/dsh-supreme) the repo dir itself is named dsh-supreme,
+    // so PROJECT_ROOT resolves one level up and the candidates above miss the
+    // sibling upstream. These two paths are correct in BOTH layouts:
+    // monorepo -> <project>/node_modules/.upstream/deepseek-harness,
+    // published CI -> <ws>/dsh-supreme/deepseek-harness (workflow clone dir).
+    join(supremeRoot, '..', 'deepseek-harness'),
+    join(supremeRoot, '..', 'node_modules', '.upstream', 'deepseek-harness'),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, 'package.json'))) return c;
@@ -97,7 +108,7 @@ function resolveDshRoot(projectRoot: string): string {
 
 export const PROJECT_ROOT = roots.PROJECT_ROOT;
 export const SUPREME_ROOT = roots.SUPREME_ROOT;
-export const DSH_ROOT = resolveDshRoot(PROJECT_ROOT);
+export const DSH_ROOT = resolveDshRoot(PROJECT_ROOT, SUPREME_ROOT);
 export const DSH_COMMIT = 'd347e703908d0406b7a7ef80e3a0e594d86b2215';
 export const BOOT_HARNESS = join(SUPREME_ROOT, 'real', 'boot.mjs');
 

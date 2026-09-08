@@ -175,3 +175,12 @@
 {"event":"MINIMAL_PLUGIN_LOAD","label":"minimal","ts":1788890559189}
 {"event":"MINIMAL_PLUGIN_OBSERVABLE_EFFECT","label":"minimal","ts":1788890559189}
 {"event":"MINIMAL_PLUGIN_DISPOSE","label":"minimal","ts":1788890559828}
+{"event":"MINIMAL_PLUGIN_LOAD","label":"minimal","ts":1788908332731}
+{"event":"MINIMAL_PLUGIN_OBSERVABLE_EFFECT","label":"minimal","ts":1788908332732}
+{"event":"MINIMAL_PLUGIN_DISPOSE","label":"minimal","ts":1788908377749}
+{"event":"MINIMAL_PLUGIN_LOAD","label":"minimal","ts":1788908378606}
+{"event":"MINIMAL_PLUGIN_OBSERVABLE_EFFECT","label":"minimal","ts":1788908378606}
+{"event":"MINIMAL_PLUGIN_DISPOSE","label":"minimal","ts":1788908379246}
+{"event":"MINIMAL_PLUGIN_LOAD","label":"minimal","ts":1788908380187}
+{"event":"MINIMAL_PLUGIN_OBSERVABLE_EFFECT","label":"minimal","ts":1788908380187}
+{"event":"MINIMAL_PLUGIN_DISPOSE","label":"minimal","ts":1788908380821}

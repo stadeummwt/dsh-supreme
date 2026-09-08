@@ -170,3 +170,11 @@
 {"schemaVersion":1,"kind":"run","runId":"benchrun_mtsz93wg_451fbd02","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788890562304}
 {"schemaVersion":1,"kind":"run","runId":"benchrun_mtsz93wg_451fbd02","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788890562304,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788890562308}
 {"schemaVersion":1,"kind":"score","runId":"benchrun_mtsz93wg_451fbd02","qualityScore":0.9,"scoredAt":1788890562308}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788908381844}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtt9v1jy_8dc368a0","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788908381854}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtt9v1jy_8dc368a0","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788908381854,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788908381862}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtt9v1jy_8dc368a0","qualityScore":0.9,"scoredAt":1788908381863}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788908383225}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtt9v2mb_cd9deeb1","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788908383235}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mtt9v2mb_cd9deeb1","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788908383235,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788908383239}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mtt9v2mb_cd9deeb1","qualityScore":0.9,"scoredAt":1788908383239}

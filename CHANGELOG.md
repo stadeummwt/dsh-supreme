@@ -2,6 +2,40 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.2.4 — CI fix 2: upstream resolution in published/CI layout
+
+Follow-up to 1.2.3's CI fixes: the full-suite job then reached the suite but
+every boot failed with `UPSTREAM_CHECKOUT_UNAVAILABLE` even though the pinned
+upstream had just been cloned and built successfully.
+
+### Root cause
+
+`resolveRoots()` treats "parent contains `dsh-supreme/`" as the monorepo
+signature. A GitHub Actions checkout lives at `<ws>/dsh-supreme/dsh-supreme`
+— the repo dir is itself named `dsh-supreme` — so the published layout
+resolved `PROJECT_ROOT` one level too high, and every `PROJECT_ROOT`-relative
+upstream candidate missed the workflow's `../deepseek-harness` clone.
+
+### Fixed
+
+- `resolveDshRoot` (runner + `real/boot.mjs` + the four `real/*verify.mjs`)
+  gained two **SUPREME_ROOT-relative candidates**, correct in BOTH layouts:
+  monorepo → `<project>/node_modules/.upstream/deepseek-harness`;
+  published CI → `<ws>/dsh-supreme/deepseek-harness` (the workflow clone dir).
+  The monorepo self-match signature is deliberately kept (an initial
+  self-match exclusion broke the monorepo layout — caught by regression
+  before push, documented here for honesty).
+
+### Verified (three real layouts)
+
+1. Monorepo: `bun run suite` → **VERDICT COMPLETE**, 61/61 checks, 5/5 boots
+   (58–909 ms), exit 0 — no regression.
+2. Published/CI layout (full repo copy at `<tmp>/work/dsh-supreme/dsh-supreme`)
+   with sibling upstream present → sibling resolved (`UPSTREAM_CHECKOUT_UNAVAILABLE`
+   gone; only the honest commit-check blocker for a stand-in dir).
+3. Same layout without upstream (= CI keyless state) → `suite:keyless:ci`
+   exit 0 with exactly the documented blockers.
+
 ## 1.2.3 — CI: make both jobs honestly green
 
 Fixes for the first two failing CI runs (`full-suite` at 34 s, `keyless-suite`
