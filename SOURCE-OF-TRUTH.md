@@ -155,3 +155,19 @@ BENCHMARK EVIDENCE = live routing score improved 0.6925 → 0.8125 as synthetic-
                     samples accumulated 1 → 9 across runs (historical-quality signal,
                     benchmark-informed routing confirmed on the real runtime)
 ```
+
+## 6. Publication record
+
+```text
+REMOTE      = github.com/stadeummwt/dsh-supreme.git (branch main)
+PUBLISHED   = subtree of dsh-supreme/ as repo root; head e9f0c56
+METHOD      = git subtree split --prefix=dsh-supreme; upstream checkout NOT included
+CLONER PATH = fresh clone -> bun install -> clone pinned upstream to ../deepseek-harness
+              -> npm run build:upstream -> bun run suite == VERDICT COMPLETE (exit 0),
+              verified end-to-end in a scratch clone after push
+KEYLESS     = bun run suite:keyless runs without any upstream: 46/46 Level-A checks PASS,
+              verdict honestly PARTIAL (REAL_BOOT_SKIPPED, UPSTREAM_CHECKOUT_UNAVAILABLE)
+NOTABLE     = upstream builds reject node_modules-nested checkouts (pnpm declaration emit,
+              TS2883) -> sibling location is the documented default; tsdown inside such a
+              checkout needs --config-loader tsx; tsdown host MUST precede client tsc
+```
