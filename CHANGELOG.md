@@ -2,6 +2,63 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.3.2 — Plug-and-play: Windows dataDir fix + one-command setup/doctor/verify
+
+Goal: **fully functional out of the box** — `plugin add` alone must be enough;
+no hand-holding, no environment archaeology. Fixes the two real-world bundle
+blockers reported on a Windows host (`bundle:verify` obs stats 0 /
+`composition:verify` relative dataDir) and adds a one-command operator
+surface. No upstream change (`d347e703` untouched, patches=0); no new
+dependencies; no gate weakened.
+
+**Root cause found (both blockers, one bug):** every JSONL store engine
+computed its parent directory with `path.lastIndexOf('/')`. On Windows,
+`path.resolve()` emits `\` separators, so `dirOf()` returned `.`, the real
+parent directory was **never created**, every `appendFile` failed ENOENT, and
+the fail-open writer silently dropped records (`stats.written` stayed 0).
+Affected: supreme-observability, supreme-benchmark (both stores),
+supreme-memory-policy. Fixed with separator-agnostic parent resolution
+(`Math.max(lastIndexOf('/'), lastIndexOf('\\'))`) — POSIX behavior unchanged
+(101/101 keyless checks re-verified).
+
+**Also fixed — evidence determinism:** the bundle/composition/v12 verifiers
+asserted after a fixed 300 ms wait, a race on slow or antivirus-scanned
+filesystems (the writer counts `written` only after `appendFile` resolves).
+They now poll (10 s budget) and await the writer queue via the new service
+`flush()`, then print the FULL stats (written/dropped/rotations/
+lastWriteError) plus an actionable diagnosis on failure
+(`real/lib/obs-proof.mjs`). Fail-open must never mean fail-silent.
+
+**New — `supreme-observability` boot-time self-check:** the store directory is
+materialized eagerly at boot and any mkdir failure is logged loudly
+(`store mkdir FAILED …`) instead of surfacing as mystery-zero stats later.
+Service surface gained `flush()` (additive; returns full writer stats).
+
+**New — plug-and-play CLI (`real/supreme.mjs`, zero deps, node/bun):**
+- `node real/supreme.mjs doctor` — environment diagnosis with PASS/FAIL/WARN
+  and an explicit fix line per check (node/pnpm/bun, upstream pin, dsh CLI +
+  lib builds, dist bundle, boot import links, profile bundle registration,
+  DSH_HOME writability).
+- `node real/supreme.mjs setup` — THE one command: auto-fixes everything
+  doctor flags (optionally clones + pins + builds the upstream with the
+  official batched script, rebuilds dist, creates the two boot-import
+  symlinks), runs the real `dsh plugin --profile <name> add`, applies the
+  chosen composition fragment (`--composition core|standard|supreme|lab`,
+  default standard; never clobbers your patch layer without `--force`), then
+  boot-probes the installed bundle end-to-end and prints **SUPREME READY**.
+  Idempotent; `--no-upstream-build` to only use what is already there.
+- `node real/supreme.mjs verify [--quick|gate…]` — verification ladder with
+  PASS/FAIL per gate and verdict markers (full ladder = bundle, composition,
+  v3, v12, v13 ×3, v131 ×7, suite:keyless:ci; `--quick` = bundle +
+  composition).
+- package.json aliases: `bun run doctor` / `bun run setup` / `bun run verify`.
+
+**Upgrade notes:** pull and re-run `node real/supreme.mjs setup` — it is
+idempotent and will rebuild `dist/` with the fix. On Windows, also re-run any
+`bundle:verify`/`composition:verify` that failed before: the previously
+silently-dropped records now land, and if anything still fails the verifier
+tells you exactly why (dropped vs no-event vs path).
+
 ## 1.3.1 — Review-hardening (branch `review/v1.3.1`)
 
 Response to an external v1.3.0 review: five findings **reproduced before

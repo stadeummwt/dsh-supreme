@@ -1,4 +1,4 @@
-// dsh-supreme/src/plugins/supreme-fake-llm/index.ts
+// src/plugins/supreme-fake-llm/index.ts
 import { z } from "zod";
 var name = "supreme-fake-llm";
 var inject = ["llm"];

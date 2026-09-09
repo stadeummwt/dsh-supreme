@@ -98,6 +98,33 @@ commands / network   → OFF by default
 router candidates    → you add yours in your own patch layer (last write wins)
 ```
 
+### Zero-thought path: one command does everything
+
+Don't want to think about environments, builds, or profiles at all? The
+built-in operator CLI (zero dependencies) diagnoses, installs, composes and
+**boot-proves** your setup:
+
+```bash
+node real/supreme.mjs doctor    # what's missing? (prints a fix line per check)
+node real/supreme.mjs setup     # EVERYTHING: builds what's missing, runs the real
+                                # `dsh plugin add`, applies the composition,
+                                # boot-probes it → "SUPREME READY"
+node real/supreme.mjs verify    # full verification ladder, PASS/FAIL per gate
+node real/supreme.mjs setup --composition standard   # core|standard|supreme|lab
+```
+
+`setup` is idempotent and never modifies the upstream checkout. It will
+clone + pin + build the pinned DSH upstream only if it is missing (skip with
+`--no-upstream-build`).
+
+> **v1.3.2 note (Windows):** if an earlier version showed
+> `bundle:verify … obs stats 0` or a `composition:verify` dataDir failure —
+> root cause found and fixed (store engines created their parent directory
+> with a POSIX-only separator check; on Windows every record write was
+> silently dropped). Re-run `setup` (rebuilds `dist/`), then re-run the
+> verifiers — they now also print full writer stats + an exact diagnosis
+> instead of a bare zero.
+
 Pick a **composition** in one more line if you don't need all seven:
 
 | Fragment | Active plugins | Use it for |
@@ -645,6 +672,8 @@ dsh-supreme/                      (repo root as published)
 │   ├── awesome-dsh-entry.yml        # catalog entry draft (one file)
 │   └── SUBMISSION-GUIDE.md          # owner-driven listing walkthrough
 ├── real/
+│   ├── supreme.mjs            # PLUG-AND-PLAY CLI: doctor · setup · verify (one command)
+│   ├── lib/obs-proof.mjs      # shared deterministic observability proof (poll + flush + diagnosis)
 │   ├── boot.mjs               # REAL DSH boot harness (Loader + root-fiber dispose)
 │   ├── bundle-verify.mjs      # E2E: real CLI install + layering (BUNDLE_E2E_COMPLETE)
 │   ├── composition-verify.mjs # E2E: 4 composition fragments (COMPOSITIONS_E2E_COMPLETE)

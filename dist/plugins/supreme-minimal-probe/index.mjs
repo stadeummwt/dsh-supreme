@@ -1,4 +1,4 @@
-// dsh-supreme/src/plugins/supreme-minimal-probe/index.ts
+// src/plugins/supreme-minimal-probe/index.ts
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";

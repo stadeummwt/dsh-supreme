@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { awaitObsRecord, fileHasLines, diagnoseObs } from './lib/obs-proof.mjs';
 
 const SUPREME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const parentDir = dirname(SUPREME_ROOT);
@@ -179,15 +180,18 @@ for (const comp of ['core', 'standard', 'supreme', 'lab']) {
   }
 
   // standard: prove the shipped RELATIVE dataDir default writes through a real event
+  // (deterministic: poll + flush — no fixed 300ms race on slow/Windows FS)
   let relProof = null;
   if (comp === 'standard') {
     try {
       const obs = ctx.get('supremeObservability');
       ctx.get('sessions').create('composition-e2e');
-      await new Promise((r) => setTimeout(r, 300));
+      const final = await awaitObsRecord(obs);
       const jsonl = join(CWD, '.supreme-data', 'observability', 'observability.jsonl');
-      const hasLines = existsSync(jsonl) && readFileSync(jsonl, 'utf8').trim().length > 0;
-      if (!hasLines) fail('dataDir', `relative dataDir default produced no record at ${jsonl}`);
+      const hasLines = fileHasLines(jsonl);
+      if (final.written < 1 || !hasLines) {
+        fail('dataDir', `${diagnoseObs('composition:standard', final, hasLines, jsonl)}\nevidence: ${JSON.stringify({ written: final.written, dropped: final.dropped, lastWriteError: final.lastWriteError, cwd: CWD })}`);
+      }
       relProof = { jsonl: '.supreme-data/observability/observability.jsonl', wroteLines: true };
     } catch (err) {
       fail('dataDir', err && err.message ? err.message : String(err));

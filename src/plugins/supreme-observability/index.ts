@@ -14,7 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   buildRecord,
   JsonlWriter,
@@ -43,6 +43,17 @@ export type ObservabilityService = {
   /** Record an already-safe, allowlisted event (host-side use, e.g. router). */
   record(event: string, fields: Record<string, unknown>): void;
   stats(): { written: number; dropped: number; rotations: number; seq: number };
+  /**
+   * Await the pending write queue (deterministic drain for hosts/verifiers).
+   * Resolves with the FULL writer stats — including dropped + lastWriteError —
+   * so a fail-open writer never has to mean fail-silent.
+   */
+  flush(): Promise<{
+    written: number;
+    dropped: number;
+    rotations: number;
+    lastWriteError: string | null;
+  }>;
   recent(count: number): Promise<SafeRecord[]>;
 };
 
@@ -73,6 +84,19 @@ export function apply(ctx: Context, config: ObservabilityConfig): void {
       },
     );
     ctx.logger.info('supreme-observability writing to %s', filePath);
+    // Boot-time self-check: materialize the store directory EAGERLY so a
+    // broken dataDir (permissions, antivirus lock, bad path) is visible in
+    // the boot log at boot — fail-open must never mean fail-silent.
+    const storeDir = dirname(filePath);
+    fs.mkdir(storeDir, { recursive: true }).then(
+      () => ctx.logger.info('supreme-observability store ready: %s', storeDir),
+      (err: unknown) =>
+        ctx.logger.warn(
+          'supreme-observability store mkdir FAILED (%s): %s — records will be dropped until fixed',
+          storeDir,
+          err instanceof Error ? err.message : String(err),
+        ),
+    );
   } else {
     fileWriter = false;
     ctx.logger.info('supreme-observability disabled — no-op mode');
@@ -253,6 +277,12 @@ export function apply(ctx: Context, config: ObservabilityConfig): void {
       rotations: writer?.getStats().rotations ?? 0,
       seq,
     }),
+    flush: async () => {
+      if (!writer) {
+        return { written: 0, dropped: 0, rotations: 0, lastWriteError: null };
+      }
+      return writer.flush();
+    },
     recent: async (count) => {
       if (!writer) return [];
       const fs = process.getBuiltinModule('node:fs').promises;

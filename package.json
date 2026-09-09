@@ -1,6 +1,6 @@
 {
   "name": "dsh-supreme",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Seven host-side policy plugins for DeepSeek Harness, composed through DSH's vendored Cordis runtime. Installable as a dsh bundle: dsh plugin --profile <name> add <this package>. Pinned upstream: deepseek-ai/deepseek-harness @ d347e703908d0406b7a7ef80e3a0e594d86b2215.",
   "license": "MIT",
   "type": "module",
@@ -54,6 +54,9 @@
     "bundle:verify": "node real/bundle-verify.mjs",
     "build:upstream": "DSH_REPO=\"${DSH_UPSTREAM_ROOT:-}\"; [ -n \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/../deepseek-harness\"; [ -d \"$DSH_REPO\" ] || DSH_REPO=\"$(pwd)/node_modules/.upstream/deepseek-harness\"; SUPREME_ROOT=\"$(pwd)\"; \"$SUPREME_ROOT/real/build-batched.sh\" host \"$DSH_REPO/tsconfig.host.json\" \"$DSH_REPO\" && cd \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE host && \"$SUPREME_ROOT/real/build-batched.sh\" client \"$DSH_REPO/tsconfig.client.json\" \"$DSH_REPO\" && npx tsdown --config-loader tsx --env.DSH_BUILD_FACE client",
     "composition:verify": "node real/composition-verify.mjs",
+    "setup": "node real/supreme.mjs setup",
+    "doctor": "node real/supreme.mjs doctor",
+    "verify": "node real/supreme.mjs verify",
     "v3:verify": "node real/v3-config-verify.mjs",
     "v12:verify": "node real/v12-config-verify.mjs",
     "v13:verify": "bun real/v13-policy-verify.mjs && bun real/v13-workflow-verify.mjs && bun real/v13-routing-verify.mjs",

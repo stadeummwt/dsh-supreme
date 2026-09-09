@@ -22,6 +22,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { awaitObsRecord, fileHasLines, diagnoseObs } from './lib/obs-proof.mjs';
 
 const SUPREME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const parentDir = dirname(SUPREME_ROOT);
@@ -157,17 +158,24 @@ const missing = Object.entries(services).filter(([, v]) => !v).map(([k]) => k);
 if (missing.length > 0) fail('services', `missing after bundle boot: ${missing.join(', ')}`);
 
 // ---------- step 6: REAL event through the bundle-installed observability ----------
+// Deterministic: poll (10s budget) + flush() — no fixed 300ms race on slow FS.
 let obsProof;
 try {
   const obs = ctx.get('supremeObservability');
   const session = ctx.get('sessions').create('bundle-e2e');
-  await new Promise((r) => setTimeout(r, 300));
-  const stats = obs.stats();
+  const final = await awaitObsRecord(obs);
   const jsonl = join(obsOverrideDir, 'observability.jsonl');
-  const fileHasLines = existsSync(jsonl) && readFileSync(jsonl, 'utf8').trim().length > 0;
-  obsProof = { statsWritten: stats.written, overrideFileHasLines: fileHasLines, overrideDir: obsOverrideDir };
-  if (stats.written < 1 || !fileHasLines) {
-    fail('observability', `no record landed through the bundle instance: ${JSON.stringify(obsProof)}`);
+  const hasLines = fileHasLines(jsonl);
+  obsProof = {
+    statsWritten: final.written,
+    dropped: final.dropped,
+    rotations: final.rotations,
+    lastWriteError: final.lastWriteError,
+    overrideFileHasLines: hasLines,
+    overrideDir: obsOverrideDir,
+  };
+  if (final.written < 1 || !hasLines) {
+    fail('observability', `${diagnoseObs('bundle', final, hasLines, jsonl)}\nevidence: ${JSON.stringify(obsProof)}`);
   }
   // Sessions are durable by design (session store owns lifecycle); the root
   // fiber dispose below unwinds every plugin effect cleanly.

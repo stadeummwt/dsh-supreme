@@ -1,6 +1,6 @@
 // src/plugins/supreme-observability/index.ts
 import { z } from "zod";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 // src/plugins/supreme-observability/engine.ts
 var RECORD_FIELDS = [
@@ -118,7 +118,7 @@ class JsonlWriter {
     return this.flush();
   }
   dirOf() {
-    const idx = this.path.lastIndexOf("/");
+    const idx = Math.max(this.path.lastIndexOf("/"), this.path.lastIndexOf("\\"));
     return idx > 0 ? this.path.slice(0, idx) : ".";
   }
 }
@@ -186,6 +186,8 @@ function apply(ctx, config) {
       })
     });
     ctx.logger.info("supreme-observability writing to %s", filePath);
+    const storeDir = dirname(filePath);
+    fs.mkdir(storeDir, { recursive: true }).then(() => ctx.logger.info("supreme-observability store ready: %s", storeDir), (err) => ctx.logger.warn("supreme-observability store mkdir FAILED (%s): %s — records will be dropped until fixed", storeDir, err instanceof Error ? err.message : String(err)));
   } else {
     fileWriter = false;
     ctx.logger.info("supreme-observability disabled — no-op mode");
@@ -327,6 +329,12 @@ function apply(ctx, config) {
       rotations: writer?.getStats().rotations ?? 0,
       seq
     }),
+    flush: async () => {
+      if (!writer) {
+        return { written: 0, dropped: 0, rotations: 0, lastWriteError: null };
+      }
+      return writer.flush();
+    },
     recent: async (count) => {
       if (!writer)
         return [];

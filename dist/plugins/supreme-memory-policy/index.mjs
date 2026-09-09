@@ -179,7 +179,7 @@ class NoteLedger {
     });
   }
   dirOf() {
-    const idx = this.filePath.lastIndexOf("/");
+    const idx = Math.max(this.filePath.lastIndexOf("/"), this.filePath.lastIndexOf("\\"));
     return idx > 0 ? this.filePath.slice(0, idx) : ".";
   }
 }

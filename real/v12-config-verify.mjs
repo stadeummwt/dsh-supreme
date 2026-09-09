@@ -28,6 +28,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
+import { awaitObsRecord, fileHasLines, diagnoseObs } from './lib/obs-proof.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SUPREME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -260,12 +261,17 @@ const stats = memory.ledgerStats();
 assert('memory.ledgerStats', stats !== null && stats.entries >= 2, JSON.stringify(stats));
 
 // ---------- step 6: real session event lands through the bundle instance ----------
+// Deterministic: poll + flush via shared helper (no fixed 300ms race).
 const obs = ctx.get('supremeObservability');
 const session = ctx.get('sessions').create('v12-e2e');
-await new Promise((r) => setTimeout(r, 300));
-const obsStats = obs.stats();
+const obsFinal = await awaitObsRecord(obs);
 const obsFile = join(HOME, 'obs', 'observability.jsonl');
-assert('observability.event.recorded', obsStats.written >= 1 && existsSync(obsFile), `written=${obsStats.written}`);
+const obsFileOk = fileHasLines(obsFile);
+assert(
+  'observability.event.recorded',
+  obsFinal.written >= 1 && obsFileOk,
+  diagnoseObs('v12', obsFinal, obsFileOk, obsFile) + ` written=${obsFinal.written} dropped=${obsFinal.dropped} lastWriteError=${JSON.stringify(obsFinal.lastWriteError)}`,
+);
 
 // ---------- step 7: verdict ----------
 const failed = checks.filter((c) => !c.ok);

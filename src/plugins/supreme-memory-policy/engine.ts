@@ -268,7 +268,9 @@ export class NoteLedger {
   }
 
   private dirOf(): string {
-    const idx = this.filePath.lastIndexOf('/');
+    // Platform-correct parent resolution (see supreme-observability/engine.ts —
+    // Windows path.resolve() emits '\'; matching only '/' skipped mkdir).
+    const idx = Math.max(this.filePath.lastIndexOf('/'), this.filePath.lastIndexOf('\\'));
     return idx > 0 ? this.filePath.slice(0, idx) : '.';
   }
 }

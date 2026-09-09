@@ -171,7 +171,12 @@ export class JsonlWriter {
   }
 
   private dirOf(): string {
-    const idx = this.path.lastIndexOf('/');
+    // Platform-correct parent resolution: path.resolve() emits '\' separators
+    // on Windows (and a path may legally mix both). Matching only '/' made
+    // dirOf() return '.' on Windows, so the real parent directory was never
+    // created and every append failed ENOENT — the fail-open writer then
+    // silently dropped records (stats.written stayed 0). See CHANGELOG 1.3.2.
+    const idx = Math.max(this.path.lastIndexOf('/'), this.path.lastIndexOf('\\'));
     return idx > 0 ? this.path.slice(0, idx) : '.';
   }
 }
