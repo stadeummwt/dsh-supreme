@@ -26,6 +26,12 @@ export const inject: string[] = [];
 export const Config = z.object({
   dataDir: z.string().default('dsh-supreme/data/benchmark'),
   fileName: z.string().default('benchmark.jsonl'),
+  /**
+   * v1.3 anti-sandbagging: when true, quality-score claims WITHOUT verifier-PASS
+   * evidence are flagged `evidenceBacked: false` and audited (`unscored_evidence`).
+   * Default false — behavior-preserving.
+   */
+  requireEvidenceForScores: z.boolean().default(false),
 });
 
 export type BenchmarkService = {
@@ -63,7 +69,7 @@ export type BenchmarkService = {
   stats(): { tasks: number; runs: number; scores: number; corruptLines: number };
 };
 
-export function apply(ctx: Context, config: { dataDir: string; fileName: string }): void {
+export function apply(ctx: Context, config: { dataDir: string; fileName: string; requireEvidenceForScores: boolean }): void {
   const fs = process.getBuiltinModule('node:fs').promises;
   const fsImpl: BenchmarkFs = {
     readFile: async (p) => {
@@ -77,7 +83,9 @@ export function apply(ctx: Context, config: { dataDir: string; fileName: string 
     mkdir: (dir) => fs.mkdir(dir, { recursive: true }).then(() => undefined),
   };
 
-  const store = new BenchmarkStore(resolve(config.dataDir, config.fileName), fsImpl);
+  const store = new BenchmarkStore(resolve(config.dataDir, config.fileName), fsImpl, {
+    requireEvidenceForScores: config.requireEvidenceForScores,
+  });
   const ready = store.init();
 
   const service: BenchmarkService = {
@@ -101,7 +109,17 @@ export function apply(ctx: Context, config: { dataDir: string; fileName: string 
     },
     recordScore: async (input) => {
       await ready;
-      await store.recordScore(input);
+      const score = await store.recordScore(input);
+      // v1.3 anti-sandbagging audit: record id + reason label ONLY — never the
+      // score value. Optional seam: ctx.get() requires no inject declaration
+      // (same idiom as the verifier) and the plugin stays dependency-free.
+      if (score.evidenceBacked === false) {
+        ctx.get('supremeObservability')?.record('unscored_evidence', {
+          recordId: score.runId,
+          kind: 'score',
+          reason: 'score_without_verifier_pass',
+        });
+      }
     },
     queryHistory: (filter) => store.queryHistory(filter),
     aggregateModelPerformance: () => store.aggregateModelPerformance(),

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/stadeummwt/dsh-supreme/schemas/benchmark-record.schema.json",
   "title": "DSH Supreme Benchmark Record",
-  "description": "One append-only JSONL line of the supreme-benchmark routing-evidence store. kind=task|run|score. v1.2 adds commitHash/irVersion provenance binding on run records.",
+  "description": "One append-only JSONL line of the supreme-benchmark routing-evidence store. kind=task|run|score. v1.2 adds commitHash/irVersion provenance binding on run records. v1.3 adds the optional anti-sandbagging flag evidenceBacked (run+score), written only when requireEvidenceForScores is enabled.",
   "oneOf": [
     {
       "type": "object",
@@ -62,6 +62,10 @@
             "status": { "enum": ["PASS", "FAIL", "ERROR", "UNAVAILABLE"] },
             "reasonCode": { "type": "string" }
           }
+        },
+        "evidenceBacked": {
+          "type": "boolean",
+          "description": "v1.3 anti-sandbagging: quality claim on this run is backed by verifier-PASS evidence. Present only when requireEvidenceForScores is enabled."
         }
       },
       "additionalProperties": false
@@ -75,7 +79,11 @@
         "runId": { "type": "string" },
         "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
         "validatorId": { "type": "string" },
-        "scoredAt": { "type": "number" }
+        "scoredAt": { "type": "number" },
+        "evidenceBacked": {
+          "type": "boolean",
+          "description": "v1.3 anti-sandbagging: score claim is backed by verifier-PASS evidence. Present only when requireEvidenceForScores is enabled."
+        }
       },
       "additionalProperties": false
     }

@@ -124,7 +124,8 @@ var DEFAULT_ROUTER_CONFIG = Object.freeze({
   latencyCeilingMs: 30000,
   minQuotaHeadroom: 0.05,
   circuit: { ...DEFAULT_CIRCUIT },
-  costFirst: true
+  costFirst: true,
+  unscoredEvidenceWeight: 1
 });
 var HEALTH_SCORE = {
   HEALTHY: 1,
@@ -214,14 +215,27 @@ function selectRoute(deps) {
       capabilityFit,
       diversity
     };
-    const score = SCORE_COMPONENTS.reduce((acc, k) => acc + weights[k] * components[k], 0);
-    return { candidate, score, components };
+    let score = SCORE_COMPONENTS.reduce((acc, k) => acc + weights[k] * components[k], 0);
+    let downweighted = false;
+    if (config.unscoredEvidenceWeight !== 1 && perfEntry?.evidenceBacked === false) {
+      score = score * config.unscoredEvidenceWeight;
+      downweighted = true;
+    }
+    return { candidate, score, components, downweighted };
   });
   scored.sort((a, b) => b.score - a.score || a.candidate.key.localeCompare(b.candidate.key));
   const best = scored[0];
   if (!hasExplorationEvidence(perf, config, eligible))
     reasonCodes.push("EXPLORATION_NO_HISTORY");
   reasonCodes.push("OK");
+  const unscoredEvidence = scored.filter((s) => s.downweighted).map((s) => ({ candidate: s.candidate.key, factor: config.unscoredEvidenceWeight }));
+  if (unscoredEvidence.length > 0)
+    reasonCodes.push("UNSCORED_EVIDENCE_DOWNWEIGHT");
+  const signal = {};
+  if (best.candidate.capabilityClass !== undefined)
+    signal.capabilityClass = best.candidate.capabilityClass;
+  if (best.candidate.cotVisibility !== undefined)
+    signal.cotVisibility = best.candidate.cotVisibility;
   return {
     decisionId,
     blocked: null,
@@ -237,7 +251,9 @@ function selectRoute(deps) {
       score: round4(s.score)
     })),
     weightsUsed: weights,
-    costFirstApplied
+    costFirstApplied,
+    ...signal,
+    ...unscoredEvidence.length > 0 ? { unscoredEvidence } : {}
   };
 }
 function hasExplorationEvidence(perf, config, eligible) {
@@ -260,7 +276,9 @@ var candidateModelSchema = z.object({
   costClass: z.enum(["FREE_CONFIRMED", "FREE_LIMITED", "TRIAL", "PAID", "UNKNOWN"]).default("UNKNOWN"),
   capabilities: z.array(z.string()).default([]),
   contextWindow: z.number().int().min(0).default(0),
-  failureDomain: z.string().default("default")
+  failureDomain: z.string().default("default"),
+  capabilityClass: z.string().min(1).max(64).optional(),
+  cotVisibility: z.enum(["verbose", "terse", "none"]).optional()
 });
 var candidateProviderSchema = z.object({
   provider: z.string().min(1),
@@ -290,6 +308,7 @@ var Config = z.object({
     cooldownMs: z.number().int().min(0).default(60000)
   }).default({ failureThreshold: 3, windowMs: 300000, cooldownMs: 60000 }),
   costFirst: z.boolean().default(true),
+  unscoredEvidenceWeight: z.number().min(0).max(1).default(1),
   effortPacing: z.object({
     enabled: z.boolean().default(false),
     byCostClass: z.record(z.string(), z.enum(["off", "low", "high", "max"])).default({ FREE_CONFIRMED: "low", FREE_LIMITED: "low", TRIAL: "high", PAID: "high", UNKNOWN: "high" }),
@@ -309,7 +328,8 @@ function apply(ctx, config) {
     latencyCeilingMs: config.latencyCeilingMs,
     minQuotaHeadroom: config.minQuotaHeadroom,
     circuit: config.circuit,
-    costFirst: config.costFirst
+    costFirst: config.costFirst,
+    unscoredEvidenceWeight: config.unscoredEvidenceWeight
   };
   const effortPacing = {
     enabled: config.effortPacing.enabled,
@@ -352,7 +372,13 @@ function apply(ctx, config) {
       const perf = new Map;
       try {
         for (const agg of deps.supremeBenchmark.aggregateModelPerformance()) {
-          perf.set(`${agg.provider}::${agg.model}`, { avgQuality: agg.avgQuality, samples: agg.samples });
+          const scoredSamples = agg.scoredSamples ?? 0;
+          const evidenceBackedScores = agg.evidenceBackedScores ?? 0;
+          perf.set(`${agg.provider}::${agg.model}`, {
+            avgQuality: agg.avgQuality,
+            samples: agg.samples,
+            evidenceBacked: scoredSamples > 0 ? evidenceBackedScores === scoredSamples : true
+          });
         }
       } catch {}
       const candidates = [];
@@ -380,7 +406,9 @@ function apply(ctx, config) {
             quotaHeadroom: entry.quotaHeadroom,
             failureDomain: model.failureDomain,
             providerAvailable: liveProviders.includes(entry.provider),
-            modelValid
+            modelValid,
+            ...model.capabilityClass !== undefined ? { capabilityClass: model.capabilityClass } : {},
+            ...model.cotVisibility !== undefined ? { cotVisibility: model.cotVisibility } : {}
           });
         }
       }
@@ -397,8 +425,17 @@ function apply(ctx, config) {
         routeDecisionId: decision.decisionId,
         provider: decision.provider,
         model: decision.model,
+        capabilityClass: decision.capabilityClass,
+        cotVisibility: decision.cotVisibility,
         detail: decision.blocked ? `blocked:${decision.reasonCodes.filter((r) => r.startsWith("GATE_FAILED")).length}gates` : `score:${decision.score ?? 0}`
       });
+      for (const entry of decision.unscoredEvidence ?? []) {
+        deps.supremeObservability.record("unscored_evidence", {
+          candidate: entry.candidate,
+          appliedFactor: entry.factor,
+          routeDecisionId: decision.decisionId
+        });
+      }
       return decision;
     },
     recordOutcome({ provider, model, success }) {

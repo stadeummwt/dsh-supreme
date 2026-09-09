@@ -7,28 +7,75 @@
  * Verified against pinned upstream:
  *   - ctx.subagents:      packages/subagent/subagent/src/index.ts:137 (SubagentRuntime)
  *   - ctx.workflowEngine: packages/workflow/workflow/src/index.ts:33 (abstract seam)
+ *   - tools/pre-execute:  packages/core/tools/src/index.ts:144 (PreToolDecision waterfall — deny materializes an error result)
+ *   - subagent/start:     packages/subagent/subagent/src/index.ts:163 (emit; payload SubagentRunInfo — runId/provider/id/local, NO parent)
+ *   - workflow/agent-start: packages/workflow/workflow/src/index.ts:68 (emit; WorkflowRunInfo + WorkflowAgentInfo{seq,label,phase?,childId})
  *
  * The plugin never starts subagents/workflows itself; it decides and exposes
  * the typed policy the host consults before using the official services.
+ *
+ * v1.3 (ASTRA-1 hardening), deterministic, value-free in audits:
+ *   - P2 A2A contact policy: inter-agent channels (spawn/message) outside the
+ *     DECLARED contact graph (config `allowedContacts` directed edges) are
+ *     audited as `a2a_contact`; under `agentContactPolicy: 'DENY'` the
+ *     pre-fact `tools/pre-execute` waterfall refuses the call with reason
+ *     code `a2a_contact_denied`. Emit-mode lifecycle events
+ *     (`subagent/start`, `workflow/agent-start`) are post-fact and therefore
+ *     DETECT-only — enforcement is pre-fact at the waterfall and via the
+ *     host's `evaluateContact()` admission check.
+ *   - P3 Overreach audit: delegation requests above `maxRiskLevel`, or with a
+ *     task class listed in `approvalRequiredFor` but no approval flag, or
+ *     touching paths outside the v1.2 path scope, are recorded as
+ *     `overreach_suspected` (labels, levels, flags, counts — never content).
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
 import {
+  A2A_CONTACT_DENIED_REASON,
+  A2A_CONTACT_EVENT,
+  OVERREACH_EVENT,
   buildDelegationScope,
   canCloseTask,
   decideWorkflow,
+  evaluateAgentContact,
+  evaluateOverreach,
   evaluatePathScope,
+  normalizeContactId,
+  normalizeTaskClass,
   validateWorkflowLimits,
+  type AgentContact,
+  type AgentContactChannel,
+  type AgentContactDecision,
   type CloseDecision,
   type CloseVerifierStatus,
+  type DelegationOverreachRequest,
   type DelegationScope,
+  type OverreachDecision,
   type PathScopeDecision,
   type WorkflowDecisionInput,
   type WorkflowDecisionResult,
   type WorkflowLimitsConfig,
 } from './engine';
+import '../context-types';
 
 export const name = 'supreme-workflow-policy';
+
+/**
+ * v1.3 P2 seam — REAL pinned workflow event, registered as a string literal.
+ *
+ *   'workflow/agent-start' — packages/workflow/workflow/src/index.ts:68
+ *   `(info: WorkflowRunInfo, agent: WorkflowAgentInfo)` @mode emit — the one
+ *   `agent()` call inside a workflow run that established a published child
+ *   (seq, label, phase?, childId). Verified against the pin d347e703.
+ *
+ * The seam is now a documented official entry in BOTH integration registries
+ * (v1.3 sync by V13-D):
+ *   - src/suite/surface-audit.ts OFFICIAL_SEAMS (hooks surface allowlist);
+ *   - src/plugins/supreme-observability/event-map.ts (pinned-event table).
+ * Until that sync landed, this registration went through a cited constant
+ * (`WORKFLOW_AGENT_START`) to keep the v1.2 surface-audit allowlist from
+ * false-positiving an invented-seam finding on a pinned-verified event.
+ */
 
 export const inject = ['supremePolicy', 'supremeObservability', 'supremeVerifier', 'subagents', 'workflowEngine'];
 
@@ -45,6 +92,21 @@ export const Config = z.object({
   blockedPaths: z.array(z.string().min(1).max(512)).default([]),
   /** v1.2: HIGH-risk tasks close only with recorded verifier PASS evidence. */
   requireVerifierPassOnClose: z.boolean().default(false),
+  /** v1.3: A2A contact policy — LOG_ONLY audits out-of-graph contacts, DENY blocks them pre-fact. */
+  agentContactPolicy: z.enum(['LOG_ONLY', 'DENY']).default('LOG_ONLY'),
+  /** v1.3: declared inter-agent contact graph — directed { from, to } edges (empty = policy inert). */
+  allowedContacts: z
+    .array(
+      z.object({
+        from: z.string().min(1).max(512),
+        to: z.string().min(1).max(512),
+      }),
+    )
+    .default([]),
+  /** v1.3: overreach ceiling — requested risk above this level is audited (default HIGH = unchanged). */
+  maxRiskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('HIGH'),
+  /** v1.3: task classes that require an approval flag on the delegation request. */
+  approvalRequiredFor: z.array(z.string().min(1).max(128)).default([]),
 });
 
 export type WorkflowPolicyService = {
@@ -55,11 +117,146 @@ export type WorkflowPolicyService = {
   evaluatePathScope(path: string): PathScopeDecision;
   /** v1.2: deterministic verifier-gated close decision. */
   canCloseTask(input: { risk: 'LOW' | 'MEDIUM' | 'HIGH'; verifierStatus: CloseVerifierStatus }): CloseDecision;
+  /** v1.3 P2: deterministic A2A contact-graph evaluation (host admission check). */
+  evaluateContact(contact: AgentContact): AgentContactDecision;
+  /** v1.3 P3: deterministic overreach evaluation; records `overreach_suspected` when overreach. */
+  evaluateDelegation(request: DelegationOverreachRequest): OverreachDecision;
 };
 
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
   const limits = validateWorkflowLimits(config as Partial<WorkflowLimitsConfig>);
   const observability = ctx.supremeObservability;
+
+  // --- v1.3 deterministic helpers (ids/roles/labels only — never content) ---
+
+  const clip = (value: string): string => value.slice(0, 96);
+
+  /** Audit one flagged contact. Graph ids and reason codes only, bounded. */
+  const auditContact = (
+    decision: AgentContactDecision,
+    from: string,
+    to: string,
+    origin: string,
+    extra?: { tool?: string; subagent?: string; workflow?: string; outcome?: 'DENIED' | 'LOGGED' | 'DETECTED' },
+  ): void => {
+    if (!decision.flagged) return;
+    observability.record(A2A_CONTACT_EVENT, {
+      ...(extra?.tool !== undefined ? { tool: clip(extra.tool) } : {}),
+      ...(extra?.subagent !== undefined ? { subagent: clip(extra.subagent) } : {}),
+      ...(extra?.workflow !== undefined ? { workflow: clip(extra.workflow) } : {}),
+      detail: [
+        `channel:${decision.channel}`,
+        `from:${clip(from)}`,
+        `to:${clip(to)}`,
+        `reason:${decision.reasonCode}`,
+        `outcome:${extra?.outcome ?? (decision.blocked ? 'DENIED' : 'LOGGED')}`,
+        `mode:${limits.agentContactPolicy}`,
+        `origin:${origin}`,
+      ].join(':'),
+    });
+  };
+
+  /** Audit one overreach verdict (labels, levels, flags, counts only). */
+  const auditOverreach = (verdict: OverreachDecision, origin: string, tool?: string): void => {
+    if (!verdict.overreach) return;
+    observability.record(OVERREACH_EVENT, {
+      ...(tool !== undefined && tool !== '' ? { tool: clip(tool) } : {}),
+      detail: [
+        `risk:${verdict.riskLevel}`,
+        `max:${verdict.maxRiskLevel}`,
+        `class:${verdict.matchedTaskClass ?? 'UNSPECIFIED'}`,
+        `approval:${verdict.approvalRequired ? 'REQUIRED' : 'NOT_REQUIRED'}`,
+        `reasons:${verdict.reasonCodes.join('+')}`,
+        ...(verdict.matchedGlobs.length > 0 ? [`globs:${verdict.matchedGlobs.map((g) => clip(g)).join('|')}`] : []),
+        `origin:${origin}`,
+      ].join(':'),
+    });
+  };
+
+  // Sender id: the pinned exec carries the calling Agent (`agent.session.id`
+  // is the durable agent id; a plain `agent.id` is accepted defensively).
+  const senderOf = (exec: unknown): string => {
+    if (!exec || typeof exec !== 'object') return '';
+    const agent = (exec as Record<string, unknown>).agent;
+    if (!agent || typeof agent !== 'object') return '';
+    const rec = agent as Record<string, unknown>;
+    const session = rec.session;
+    if (session && typeof session === 'object') {
+      const sid = (session as Record<string, unknown>).id;
+      if (typeof sid === 'string' && sid.trim() !== '') return normalizeContactId(sid);
+    }
+    return typeof rec.id === 'string' && rec.id.trim() !== '' ? normalizeContactId(rec.id) : '';
+  };
+
+  // Fixed extraction contract: the inter-agent TARGET is read from the call's
+  // TOP-LEVEL arguments under these names only — the pinned `send_message`
+  // tool carries `agent_id` (tool-subagent-control); `to`/`target` are the
+  // declared delegation-style spellings. Values are used solely as bounded
+  // graph ids for matching/audit.
+  const CONTACT_TARGET_ARG_NAMES = ['agent_id', 'to', 'target'] as const;
+  // Pinned model-facing spawn tool name (tool-subagent default `toolName`).
+  const SPAWN_TOOL_NAMES = new Set(['subagent']);
+
+  const channelOf = (toolName: string): AgentContactChannel => {
+    if (SPAWN_TOOL_NAMES.has(toolName)) return 'spawn';
+    const tokens = toolName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return tokens.some((t) => t === 'spawn' || t === 'delegate' || t === 'subagent' || t === 'workflow')
+      ? 'spawn'
+      : 'message';
+  };
+
+  const firstContactTarget = (args: unknown): string => {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return '';
+    const rec = args as Record<string, unknown>;
+    for (const argName of CONTACT_TARGET_ARG_NAMES) {
+      const value = rec[argName];
+      if (typeof value === 'string' && value.trim() !== '') return normalizeContactId(value);
+    }
+    return '';
+  };
+
+  // Delegation-parameter extraction (documented contract, top-level only):
+  //   capabilityClass  — the shared v1.3 signal field (policy plugin contract);
+  //   requestedTools / requestedPaths — string[] delegation parameters;
+  //   riskLevel — explicit LOW|MEDIUM|HIGH; approvalGranted — approval flag.
+  // The check fires only for delegation-shaped calls (pinned spawn tool name
+  // or at least one declared parameter) — ordinary calls pass untouched.
+  const delegationRequestOf = (exec: unknown): { request: DelegationOverreachRequest; toolName: string } | undefined => {
+    if (!exec || typeof exec !== 'object') return undefined;
+    const rec = exec as Record<string, unknown>;
+    const toolName = typeof rec.name === 'string' ? rec.name : '';
+    const args = rec.arguments;
+    const argsRec =
+      args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+    const stringList = (value: unknown): string[] | undefined =>
+      Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string')
+        ? (value as string[])
+        : undefined;
+    const requestedTools = stringList(argsRec.requestedTools);
+    const requestedPaths = stringList(argsRec.requestedPaths);
+    const riskLevel = typeof argsRec.riskLevel === 'string' ? argsRec.riskLevel : undefined;
+    const taskClass =
+      normalizeTaskClass(argsRec.capabilityClass) ?? normalizeTaskClass(rec.capabilityClass);
+    const approvalGranted = typeof argsRec.approvalGranted === 'boolean' ? argsRec.approvalGranted : undefined;
+    const delegationShaped =
+      SPAWN_TOOL_NAMES.has(toolName) ||
+      requestedTools !== undefined ||
+      requestedPaths !== undefined ||
+      riskLevel !== undefined ||
+      taskClass !== undefined ||
+      approvalGranted !== undefined;
+    if (!delegationShaped) return undefined;
+    return {
+      toolName,
+      request: {
+        taskClass,
+        requestedTools: [toolName, ...(requestedTools ?? [])],
+        requestedPaths,
+        riskLevel,
+        approvalGranted,
+      },
+    };
+  };
 
   const service: WorkflowPolicyService = {
     decide(input) {
@@ -74,14 +271,97 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     limits: () => limits,
     evaluatePathScope: (path) => evaluatePathScope(limits, path),
     canCloseTask: (input) => canCloseTask(limits, input),
+    evaluateContact: (contact) => evaluateAgentContact(limits, contact),
+    evaluateDelegation: (request) => {
+      const verdict = evaluateOverreach(limits, request);
+      auditOverreach(verdict, 'service');
+      return verdict;
+    },
   };
+
+  // --- v1.3 P2: pre-fact inter-agent channel gate (REAL deny seam) + P3 overreach audit.
+  // Waterfall listener: next() called exactly once on the allow path; a deny
+  // returns the pinned PreToolDecision deny shape without calling next().
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    const toolName = typeof exec?.name === 'string' ? exec.name : '';
+
+    // P2 — evaluate the inter-agent channel BEFORE the call proceeds.
+    if (toolName !== '') {
+      const sender = senderOf(exec);
+      const target = sender !== '' ? firstContactTarget(exec?.arguments) : '';
+      if (target !== '') {
+        const decision = evaluateAgentContact(limits, {
+          from: sender,
+          to: target,
+          channel: channelOf(toolName),
+        });
+        if (decision.flagged) {
+          auditContact(decision, sender, target, 'tools_pre_execute', { tool: toolName });
+          if (decision.blocked) {
+            return {
+              kind: 'deny' as const,
+              reason: `supreme-workflow-policy: inter-agent ${decision.channel} outside the declared contact graph (${A2A_CONTACT_DENIED_REASON})`,
+            };
+          }
+        }
+      }
+    }
+
+    // P3 — overreach audit for delegation-shaped calls (audit-only; never denies).
+    const delegation = delegationRequestOf(exec);
+    if (delegation !== undefined) {
+      auditOverreach(evaluateOverreach(limits, delegation.request), 'tools_pre_execute', delegation.toolName);
+    }
+
+    return next();
+  });
+
+  // --- v1.3 P2: post-fact detection on the pinned emit-mode lifecycle events.
+  // These seams cannot block (emit mode) — flagged contacts are audited with
+  // outcome DETECTED; enforcement is pre-fact at tools/pre-execute above and
+  // via the host's evaluateContact() admission check.
+  ctx.on('subagent/start', (info) => {
+    const childId = typeof info?.id === 'string' ? normalizeContactId(info.id) : '';
+    if (childId === '') return;
+    const provider = typeof info?.provider === 'string' ? info.provider : 'unknown';
+    const decision = evaluateAgentContact(limits, {
+      from: `provider:${provider}`,
+      to: childId,
+      channel: 'spawn',
+    });
+    auditContact(decision, `provider:${provider}`, childId, 'subagent_start', {
+      subagent: childId,
+      outcome: 'DETECTED',
+    });
+  });
+
+  ctx.on('workflow/agent-start', (info, agent) => {
+    const metaName = typeof info?.meta?.name === 'string' ? info.meta.name : undefined;
+    const from = `workflow:${metaName ?? (typeof info?.id === 'string' ? info.id : 'unknown')}`;
+    const childId =
+      typeof agent?.childId === 'string'
+        ? normalizeContactId(agent.childId)
+        : typeof agent?.label === 'string'
+          ? normalizeContactId(agent.label)
+          : '';
+    if (childId === '') return;
+    const decision = evaluateAgentContact(limits, { from, to: childId, channel: 'spawn' });
+    auditContact(decision, from, childId, 'workflow_agent_start', {
+      workflow: metaName,
+      outcome: 'DETECTED',
+    });
+  });
 
   ctx.provide('supremeWorkflowPolicy', Object.freeze(service));
   ctx.logger.info(
-    'supreme-workflow-policy active (maxConcurrent=%d maxTotal=%d maxDepth=%d)',
+    'supreme-workflow-policy active (maxConcurrent=%d maxTotal=%d maxDepth=%d a2a=%s contacts=%d maxRisk=%s approvalFor=%d)',
     limits.maxConcurrentAgents,
     limits.maxTotalAgents,
     limits.maxDepth,
+    limits.agentContactPolicy,
+    limits.allowedContacts.length,
+    limits.maxRiskLevel,
+    limits.approvalRequiredFor.length,
   );
 }
 

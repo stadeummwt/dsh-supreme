@@ -32,6 +32,7 @@ export const inject: string[] = [];
 |---|---|---|---|
 | `dataDir` | string | `dsh-supreme/data/benchmark` | Store directory (resolved against cwd). |
 | `fileName` | string | `benchmark.jsonl` | Append-only JSONL file. |
+| `requireEvidenceForScores` | boolean | `false` | v1.3 anti-sandbagging: when `true`, quality-score claims without verifier-PASS evidence are flagged `evidenceBacked: false` (score record + its run) and audited (`unscored_evidence`, record id + reason label only — never the score value). Default `false` = behavior-preserving. |
 
 ## Public service contract (`supremeBenchmark`)
 
@@ -40,9 +41,9 @@ export const inject: string[] = [];
 | `recordTask({ taskId, category, description? })` | `Promise<string>` | Registers a benchmark task; returns its `taskId`. |
 | `startRun({ taskId, taskCategory, provider, model, profile, sessionId? })` | `Promise<string>` | Opens a run (`runId` generated, schemaVersion 1); returns the id. |
 | `finishRun(runId, outcome)` | `Promise<BenchmarkRun \| undefined>` | Closes a run with success/latency/usage/tool counts/failure class/verification; `undefined` for unknown runId. |
-| `recordScore({ runId, qualityScore, validatorId? })` | `Promise<void>` | Attaches a quality score in `[0,1]` (throws outside bounds). |
+| `recordScore({ runId, qualityScore, validatorId? })` | `Promise<void>` | Attaches a quality score in `[0,1]` (throws outside bounds). With `requireEvidenceForScores: true`, the score + run also carry `evidenceBacked` (`true` iff the scored run has `verification.status === 'PASS'`); an unbacked claim additionally emits the `unscored_evidence` audit event (optional `ctx.get('supremeObservability')` seam). |
 | `queryHistory(filter?)` | `BenchmarkRun[]` | Finished runs filtered by provider/model/taskId/success, newest first. |
-| `aggregateModelPerformance()` | `ModelPerformance[]` | Per `provider::model`: samples, success rate, avg quality/latency, failure breakdown. |
+| `aggregateModelPerformance()` | `ModelPerformance[]` | Per `provider::model`: samples, success rate, avg quality/latency, failure breakdown — plus v1.3 `scoredSamples` (samples carrying a quality claim) and `evidenceBackedScores` (claims backed by verifier-PASS evidence), which the router's anti-sandbagging downweight consumes. |
 | `stats()` | `{ tasks, runs, scores, corruptLines }` | Store counters; corrupt JSONL lines are counted, never fatal. |
 
 Record kinds (`schemaVersion: 1`): `task`, `run`, `score`. `failureClass` is one of 16 bounded classes (`AUTH`, `RATE_LIMIT`, `QUOTA`, `TIMEOUT`, `NETWORK`, `SERVER`, `INVALID_MODEL`, `INVALID_SCHEMA`, `WRONG_TOOL`, `TOOL_EXECUTION`, `WRONG_ANSWER`, `FORMAT`, `CONTEXT`, `COST_POLICY`, `VERIFICATION`, `UNKNOWN`).
@@ -55,7 +56,7 @@ Record kinds (`schemaVersion: 1`): `task`, `run`, `score`. `failureClass` is one
 
 ## Data retained
 
-- `dsh-supreme/data/benchmark/benchmark.jsonl` — one JSON object per line: `task` (`taskId`, `category`, `description?`, `createdAt`), `run` (`runId`, `taskId`, `taskCategory`, `sessionId?`, `provider`, `model`, `profile`, `startedAt`, `finishedAt?`, `latencyMs?`, `ttftMs?`, `usageIn?`, `usageOut?`, `toolCount?`, `subagentCount?`, `workflowCount?`, `success?`, `qualityScore?`, `failureClass?`, `verification?`), `score` (`runId`, `qualityScore`, `validatorId?`, `scoredAt`).
+- `dsh-supreme/data/benchmark/benchmark.jsonl` — one JSON object per line: `task` (`taskId`, `category`, `description?`, `createdAt`), `run` (`runId`, `taskId`, `taskCategory`, `sessionId?`, `provider`, `model`, `profile`, `startedAt`, `finishedAt?`, `latencyMs?`, `ttftMs?`, `usageIn?`, `usageOut?`, `toolCount?`, `subagentCount?`, `workflowCount?`, `success?`, `qualityScore?`, `failureClass?`, `verification?`, `evidenceBacked?`), `score` (`runId`, `qualityScore`, `validatorId?`, `scoredAt`, `evidenceBacked?`). `evidenceBacked` is written only when `requireEvidenceForScores` is enabled and re-evaluates when final verification lands (last-write-wins).
 - Replay semantics: **last write wins per `runId`/`taskId`** when the log is re-indexed.
 
 ## Model-visible behavior
@@ -74,4 +75,5 @@ None. Host-side only; no tools, no prompt sections, no events consumed.
 bun run dsh-supreme/src/suite/cli.ts --skip-real-boots   # Level A: benchmark.* (5 checks)
 node dsh-supreme/real/boot.mjs --profile supreme --setup # gate: benchmark_stores_evidence
 node dsh-supreme/real/boot.mjs --profile lab --setup
+bun dsh-supreme/real/v13-routing-verify.mjs              # v1.3 E2E: evidence-backed flag + unscored_evidence audit (V13_ROUTING_E2E_COMPLETE)
 ```

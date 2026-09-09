@@ -37,7 +37,7 @@ export const inject = ['llm', 'supremePolicy', 'supremeObservability', 'supremeB
 | `candidates[].credentialConfigured` | boolean | `false` | Used when `credentialMode: config-owned`. |
 | `candidates[].credentialRef` | string (optional) | — | Credential reference for `service` mode. |
 | `candidates[].quotaHeadroom` | number 0–1 | `0.5` | Shared per provider entry. |
-| `candidates[].models[]` | array ≥ 1 | — | `{ model, costClass (default UNKNOWN), capabilities (default []), contextWindow (default 0), failureDomain (default 'default') }`. |
+| `candidates[].models[]` | array ≥ 1 | — | `{ model, costClass (default UNKNOWN), capabilities (default []), contextWindow (default 0), failureDomain (default 'default'), capabilityClass? (v1.3 label), cotVisibility? (v1.3 label) }`. |
 | `weights` | object | `quality 0.3 · health 0.2 · quota 0.15 · reliability 0.1 · latency 0.1 · capabilityFit 0.1 · diversity 0.05` | Normalized to sum 1 before scoring. |
 | `minBenchmarkSamples` | integer ≥ 1 | `5` | Exploration threshold before history is trusted. |
 | `latencyCeilingMs` | integer ≥ 100 | `30 000` | Ceiling constant (v1 scoring uses a conservative latency value of 0.5). |
@@ -45,6 +45,7 @@ export const inject = ['llm', 'supremePolicy', 'supremeObservability', 'supremeB
 | `circuit.failureThreshold` | integer ≥ 1 | `3` | Failures inside the window that open the breaker. |
 | `circuit.windowMs` | integer ≥ 1000 | `300 000` | Failure/success window. |
 | `circuit.cooldownMs` | integer ≥ 0 | `60 000` | Open-state cooldown. |
+| `unscoredEvidenceWeight` | number 0–1 | `1` | v1.3 anti-sandbagging: fixed multiplicative downweight for candidates whose benchmark scores lack verifier-PASS evidence. `1` = disabled (back-compat); e.g. `0.5` halves such scores. Deterministic — no ML. |
 
 ## Public service contract (`supremeRouter`)
 
@@ -58,6 +59,11 @@ export const inject = ['llm', 'supremePolicy', 'supremeObservability', 'supremeB
 Hard gates, in order: `policy_cost` (only FREE_CONFIRMED / FREE_LIMITED pass locally), `provider_available` (live catalog), `credential_available` (fail-closed), `model_valid` (live resolution), `capability_fit`, `context_sufficient`, `health_ok` (circuit not open), `quota_ok`.
 
 Decision semantics: candidates below `minBenchmarkSamples` score quality at the neutral 0.5 exploration default and flag `degraded: true` (+ `EXPLORATION_NO_HISTORY`); unknown inputs receive conservative values; when nothing is eligible the decision is `blocked: 'BLOCKED_NO_ELIGIBLE_ROUTE'` with `GATE_FAILED:<candidate>:<gate>` reason codes — **never** a relaxed-gate fallback and **never** a paid fallback.
+
+v1.3 additions:
+
+- **CapabilitySignal carrier** (ASTRA P3): `candidates[].models[].capabilityClass` (string) and `.cotVisibility` (`verbose \| terse \| none`) are optional config-owned labels. The selected candidate's labels are attached to the decision record under the exact contract field names `capabilityClass` / `cotVisibility` (shape mirrored with `supreme-policy/engine.ts` `CapabilitySignal`; enforcement lives in policy — the router only carries). Unlabelled decisions carry no label keys. Labels are echoed on the `route_decision` observability event (labels only, never content).
+- **Anti-sandbagging weighting** (ASTRA P3): when `unscoredEvidenceWeight < 1`, candidates whose benchmark history carries quality claims that are not fully verifier-PASS-backed (see supreme-benchmark `evidenceBacked` / aggregate `scoredSamples`·`evidenceBackedScores`) get their routing score multiplied by the fixed factor. Affected candidate ids + factors land on `decision.unscoredEvidence`, a `UNSCORED_EVIDENCE_DOWNWEIGHT` reason code, and one `unscored_evidence` audit event per candidate (candidate id + applied factor only). Candidates with no score claims are never downweighted; `1` (default) applies nothing and emits nothing.
 
 ## Security boundary
 
@@ -87,4 +93,5 @@ bun run dsh-supreme/src/suite/cli.ts --skip-real-boots   # Level A: router.* (10
 node dsh-supreme/real/boot.mjs --profile supreme --setup # gates: router_selects_eligible + router_rejects_paid
 node dsh-supreme/real/boot.mjs --profile lab --setup
 bun run dsh-supreme/src/suite/cli.ts                     # perf: router ~0.02 ms / 1k iterations (8 candidates)
+bun dsh-supreme/real/v13-routing-verify.mjs              # v1.3 E2E: label carrier + anti-sandbagging (V13_ROUTING_E2E_COMPLETE)
 ```

@@ -10,12 +10,26 @@ import {
   type Check,
 } from './harness';
 import {
+  classifyToolRisk,
+  DENY_RETRY_REASON_CODE,
+  DenyCircumventionGuard,
+  denySignature,
+  ENCODING_BLOB_CLASS,
+  evaluateCapabilityGate,
+  evaluateCoTEnforcement,
   evaluateDelegationPolicy,
   evaluateRoutePolicy,
   evaluateCoTGate,
   executionPolicySummary,
+  extractCapabilitySignal,
+  formatTaintEventDetail,
+  inspectEncodingTaint,
   inspectTaint,
+  isCapabilityClassSanctioned,
+  normalizeCapabilityClass,
   PRODUCTION_DEFAULTS,
+  resolveCotVisibility,
+  scanToolArguments,
   validatePolicyConfig,
   PolicyConfigError,
   verificationRequirement,
@@ -30,6 +44,7 @@ import {
 import {
   aggregateRuns,
   BenchmarkStore,
+  isVerifierPassEvidence,
   validateBenchmarkRecord,
   BenchmarkValidationError,
   type BenchmarkFs,
@@ -69,11 +84,19 @@ import {
   type MemoryItem,
 } from '../plugins/supreme-memory-policy/engine';
 import {
+  A2A_CONTACT_DENIED_REASON,
+  A2A_CONTACT_EVENT,
+  AGENT_CONTACT_POLICIES,
   buildDelegationScope,
   canCloseTask,
+  classifyDelegationToolRisk,
   decideWorkflow,
+  evaluateAgentContact,
+  evaluateOverreach,
   evaluatePathScope,
+  OVERREACH_EVENT,
   pathMatchesGlob,
+  RISK_LEVELS,
   validateWorkflowLimits,
   WORKFLOW_LIMIT_DEFAULTS,
   WorkflowConfigError,
@@ -197,6 +220,130 @@ export function policyChecks(): Check[] {
       expectEqual(evaluateCoTGate('ENFORCE', { reasoningTracePresent: undefined, tool: 'bash' }).decision, 'AUDIT', 'unknown evidence never denied');
       expectEqual(evaluateCoTGate('ENFORCE', { reasoningTracePresent: true, tool: 'bash' }).decision, 'ALLOW', 'trace present allows');
     }),
+    // ---- v1.3 ASTRA-hardening (evidence-bound to real/v13-policy-verify.mjs) ----
+    check('policy.cot-visibility-downgrade', 'v1.3: CoT visibility `none` downgrades ENFORCE deny to audit-only', () => {
+      // Empty-CoT models can't be coerced into producing a trace: visibility
+      // 'none' + known-absent trace ⇒ AUDIT, never DENY (no self-inflicted DoS).
+      const none = evaluateCoTEnforcement('ENFORCE', { reasoningTracePresent: false, tool: 'bash', visibility: 'none' });
+      expectEqual(none.decision, 'AUDIT', 'visibility none never denies');
+      expectTrue(none.reasonCodes.includes('COT_VISIBILITY_NONE_DOWNGRADED'), 'downgrade reason recorded');
+      // 'verbose' keeps the v1.2 ENFORCE posture unchanged.
+      expectEqual(evaluateCoTEnforcement('ENFORCE', { reasoningTracePresent: false, tool: 'bash', visibility: 'verbose' }).decision, 'DENY', 'verbose still denies under ENFORCE');
+      // Resolution order: explicit signal > route profile > default 'verbose'.
+      expectEqual(resolveCotVisibility({ explicit: 'terse', profile: 'none' }), 'terse', 'explicit signal wins');
+      expectEqual(resolveCotVisibility({ explicit: 'bogus', profile: 'none' }), 'none', 'profile used when explicit invalid');
+      expectEqual(resolveCotVisibility({}), 'verbose', 'default is verbose (v1.2 behavior)');
+      // OFF stays allow regardless of visibility.
+      expectEqual(evaluateCoTEnforcement('OFF', { reasoningTracePresent: false, tool: 'bash', visibility: 'none' }).decision, 'ALLOW', 'OFF allows');
+    }),
+    check('policy.cot-risk-gate', 'v1.3: riskGatedCoT keeps ENFORCE for HIGH-risk tools, downgrades the rest', () => {
+      expectEqual(classifyToolRisk('bash'), 'HIGH', 'command HIGH');
+      expectEqual(classifyToolRisk('web-fetch'), 'HIGH', 'network HIGH');
+      expectEqual(classifyToolRisk('file-write'), 'HIGH', 'write HIGH');
+      expectEqual(classifyToolRisk('notebook'), 'LOW', 'token matching avoids substring hits');
+      expectEqual(classifyToolRisk('read-file'), 'LOW', 'read-only LOW');
+      const high = evaluateCoTEnforcement('ENFORCE', { reasoningTracePresent: false, tool: 'bash', riskGated: true, toolRisk: classifyToolRisk('bash') });
+      expectEqual(high.decision, 'DENY', 'HIGH-risk tool keeps ENFORCE deny');
+      const low = evaluateCoTEnforcement('ENFORCE', { reasoningTracePresent: false, tool: 'search', riskGated: true, toolRisk: classifyToolRisk('search') });
+      expectEqual(low.decision, 'AUDIT', 'non-HIGH tool downgraded to AUDIT');
+      // Without the gate, ENFORCE denies regardless of tool risk (v1.2 matrix).
+      expectEqual(
+        evaluateCoTEnforcement('ENFORCE', { reasoningTracePresent: false, tool: 'search', riskGated: false, toolRisk: 'LOW' }).decision,
+        'DENY',
+        'gate off preserves v1.2 posture',
+      );
+    }),
+    check('policy.deny-retry-guard', 'v1.3: deny-circumvention guard flags same-shape retries, value-free', () => {
+      const guard = new DenyCircumventionGuard();
+      guard.recordDeny('s1', 'bash', { command: 'rm -rf /' });
+      // Same argument SHAPE with different values is still a flagged retry —
+      // values never enter the signature, so honest traffic is unaffected while
+      // value-swapped retries are caught.
+      expectEqual(guard.check('s1', 'bash', { command: 'echo safe' }).denied, true, 'same shape flagged');
+      expectTrue(guard.check('s1', 'bash', { command: 'echo safe' }).reasonCodes.includes(DENY_RETRY_REASON_CODE), 'deny_retry reason code');
+      expectEqual(guard.check('s1', 'bash', { cmd: 'x' }).denied, false, 'other shape unaffected');
+      expectEqual(guard.check('s1', 'curl', { command: 'rm -rf /' }).denied, false, 'other tool unaffected');
+      expectEqual(guard.check('s2', 'bash', { command: 'rm -rf /' }).denied, false, 'other session unaffected');
+      // Signature encodes argument NAMES + primitive TYPES only.
+      const sig = denySignature('bash', { command: 'SECRET_SENTINEL_XYZ', n: 1, deep: { a: [1, 2] } });
+      expectTrue(!sig.includes('SECRET_SENTINEL'), 'signature can never leak values');
+      expectTrue(sig.includes('command:string'), 'signature encodes names+types');
+      expectEqual(normalizeCapabilityClass(' routine '), 'ROUTINE', 'class normalization shared by gate');
+      // Operator escape hatch restores the session.
+      guard.resetDenyCircumvention('s1');
+      expectEqual(guard.check('s1', 'bash', { command: 'echo safe' }).denied, false, 'reset restores');
+      expectEqual(guard.signatureCount('s1'), 0, 'reset clears signatures');
+    }),
+    check('policy.encoding-blob-scan', 'v1.3: base64/hex blob detection is deterministic and value-free', () => {
+      const b64 = inspectEncodingTaint({ blob: 'Z'.repeat(512) }); // 'Z' is base64-only (outside the hex alphabet)
+      expectTrue(b64.tainted, 'base64 blob found');
+      expectEqual(b64.hits[0]?.kind, 'base64', 'kind base64');
+      expectEqual(b64.hits[0]?.length, 512, 'run length reported');
+      // Hex is more specific (subset alphabet) and reported first/instead.
+      expectEqual(inspectEncodingTaint('a'.repeat(256)).hits[0]?.kind, 'hex', 'hex classified as hex');
+      expectEqual(inspectEncodingTaint('a'.repeat(255)).tainted, false, 'below-threshold negative');
+      // Combined scan + formatter: class names, arg NAME, kind, length — never a value.
+      const scan = scanToolArguments({ data: 'Z'.repeat(300) }, { unicode: true, encoding: true });
+      expectTrue(scan.hits.includes(ENCODING_BLOB_CLASS), 'encoding_blob class reported');
+      const detail = formatTaintEventDetail(scan);
+      expectTrue(detail.includes('arg:data;kind:base64;len:300'), 'arg name + kind + len only');
+      expectTrue(!detail.includes('Z'.repeat(16)), 'value never echoed');
+      // Toggle off preserves v1.2 behavior exactly.
+      const off = scanToolArguments({ data: 'Z'.repeat(300) }, { unicode: true, encoding: false });
+      expectTrue(!off.tainted && off.encoding.length === 0, 'encoding off → clean scan');
+    }),
+    check('policy.capability-gate-lab-allowlist', 'v1.3: capability-class gate — LAB allowlist is additive and floor-bound', () => {
+      // Unlabeled requests pass untouched in every mode (UNKNOWN-cost posture unchanged).
+      expectEqual(evaluateCapabilityGate(prodConfig(), {}).decision, 'ALLOW', 'absent class passes');
+      expectEqual(evaluateCapabilityGate(prodConfig(), { capabilityClass: 'CYBER_OFFENSIVE' }).decision, 'ALLOW', 'gate OFF default untouched');
+      // STANDARD + ENFORCE: unsanctioned class denied (normalization applied).
+      const std = prodConfig({ capabilityClassGate: 'ENFORCE' });
+      expectEqual(evaluateCapabilityGate(std, { capabilityClass: 'cyber_offensive' }).decision, 'DENY', 'ENFORCE denies unsanctioned');
+      const sanctioned = prodConfig({ capabilityClassGate: 'ENFORCE', sanctionedCapabilityClasses: ['ROUTINE'] });
+      expectEqual(evaluateCapabilityGate(sanctioned, { capabilityClass: 'ROUTINE' }).decision, 'ALLOW', 'sanctioned class allowed');
+      // LAB allowlist is ADDITIVE but only on the LAB floor — no leak to STANDARD.
+      const labAllow = ['DESTRUCTIVE_OPS'];
+      expectTrue(isCapabilityClassSanctioned({ ...LAB_CONFIG, labCapabilityClassAllowlist: labAllow }, 'destructive_ops'), 'LAB allowlist binds in LAB');
+      expectTrue(!isCapabilityClassSanctioned({ ...prodConfig(), labCapabilityClassAllowlist: labAllow }, 'DESTRUCTIVE_OPS'), 'no LAB leak to STANDARD');
+      // AUDIT mode records instead of denying, with the normalized label.
+      const audit = evaluateCapabilityGate(prodConfig({ capabilityClassGate: 'AUDIT' }), { capabilityClass: 'DESTRUCTIVE_OPS' });
+      expectEqual(audit.decision, 'AUDIT', 'AUDIT mode flags');
+      expectEqual(audit.capabilityClass, 'DESTRUCTIVE_OPS', 'normalized label reported');
+      // No implicit ROUTINE exemption: labeling can only RESTRICT, never grant.
+      expectTrue(!isCapabilityClassSanctioned(prodConfig(), 'ROUTINE'), 'no ROUTINE exemption on empty sanctions');
+    }),
+    check('policy.capability-signal-extract', 'v1.3: CapabilitySignal contract — exact field names, inert on noise', () => {
+      const sig = extractCapabilitySignal({ capabilityClass: '  routine ', cotVisibility: 'none', tool: 'bash' });
+      expectEqual(sig.capabilityClass, 'ROUTINE', 'class normalized trim+upper');
+      expectEqual(sig.cotVisibility, 'none', 'visibility passed through');
+      expectEqual(extractCapabilitySignal({ cotVisibility: 'shout' }).cotVisibility, undefined, 'unknown visibility ignored');
+      expectEqual(extractCapabilitySignal({ capabilityClass: 42 }).capabilityClass, undefined, 'non-string ignored');
+      expectEqual(extractCapabilitySignal('not-an-object').capabilityClass, undefined, 'non-object payload inert');
+      expectEqual(Object.keys(extractCapabilitySignal({})).length, 0, 'absent signal stays absent');
+    }),
+    check('policy.v13-config-validation', 'v1.3: new config keys validate; defaults behavior-preserving', () => {
+      // Defaults: everything off except the retry-only deny-circumvention guard.
+      expectEqual(PRODUCTION_DEFAULTS.capabilityClassGate, 'OFF', 'gate default OFF');
+      expectEqual(PRODUCTION_DEFAULTS.enableEncodingScan, false, 'encoding scan default off');
+      expectEqual(PRODUCTION_DEFAULTS.riskGatedCoT, false, 'risk gate default off');
+      expectEqual(PRODUCTION_DEFAULTS.denyCircumventionGuard, true, 'retry-only guard default on');
+      expectEqual(Object.keys(PRODUCTION_DEFAULTS.cotVisibilityProfiles).length, 0, 'no visibility profiles by default');
+      // Valid values accepted and returned.
+      const cfg = validatePolicyConfig(prodConfig({
+        cotVisibilityProfiles: { 'agent-a': 'none' },
+        capabilityClassGate: 'AUDIT',
+        sanctionedCapabilityClasses: ['ROUTINE'],
+        labCapabilityClassAllowlist: ['DESTRUCTIVE_OPS'],
+      }));
+      expectEqual(cfg.cotVisibilityProfiles['agent-a'], 'none', 'visibility profile accepted');
+      expectEqual(cfg.capabilityClassGate, 'AUDIT', 'gate mode accepted');
+      // Invalid values rejected deterministically.
+      expectThrows(() => validatePolicyConfig(prodConfig({ cotVisibilityProfiles: { r: 'shout' as never } })), 'bad visibility rejected');
+      expectThrows(() => validatePolicyConfig(prodConfig({ capabilityClassGate: 'PARANOID' as never })), 'bad gate mode rejected');
+      expectThrows(() => validatePolicyConfig(prodConfig({ sanctionedCapabilityClasses: [''] })), 'empty sanction entry rejected');
+      expectThrows(() => validatePolicyConfig(prodConfig({ labCapabilityClassAllowlist: [7] as never })), 'non-string allowlist rejected');
+      expectTrue(PolicyConfigError !== undefined, 'error type present');
+    }),
   ];
 }
 
@@ -251,11 +398,31 @@ export function observabilityChecks(): Check[] {
       const cot = buildRecord(21, 1000, 'cot_missing', { tool: 'bash', detail: 'ENFORCE' }) as Record<string, unknown>;
       expectEqual(cot.detail, 'ENFORCE', 'cot detail kept');
     }),
+    check('observability.v13-events-allowlisted', 'v1.3 audit events (deny_retry/a2a_contact/overreach) serialize metadata only', () => {
+      // A2A contact audit: allowlisted fields + bounded value-free detail line.
+      const a2a = buildRecord(30, 1000, A2A_CONTACT_EVENT, {
+        tool: 'send_message',
+        detail: 'channel:message:from:planner:to:executor:reason:CONTACT_OUTSIDE_GRAPH:outcome:LOGGED:mode:LOG_ONLY:origin:tools_pre_execute',
+        to: 'executor', // NOT allowlisted → must be dropped entirely
+      }) as Record<string, unknown>;
+      expectEqual(a2a.event, 'a2a_contact', 'a2a event kept');
+      expectEqual(a2a.tool, 'send_message', 'allowlisted tool field');
+      expectTrue(!('to' in a2a), 'graph endpoint values never serialized');
+      const overreach = buildRecord(31, 1000, OVERREACH_EVENT, {
+        tool: 'subagent',
+        detail: 'risk:HIGH:max:MEDIUM:reasons:RISK_ABOVE_MAX',
+      }) as Record<string, unknown>;
+      expectEqual(overreach.detail, 'risk:HIGH:max:MEDIUM:reasons:RISK_ABOVE_MAX', 'labels/levels only');
+      expectEqual(buildRecord(32, 1000, 'deny_retry', { tool: 'bash', detail: 'origin:tools_pre_execute' }).event, 'deny_retry', 'deny_retry serializes');
+      // Sentinel scrub still applies to allowlisted string fields (defense in depth).
+      const scrubbed = buildRecord(33, 1000, A2A_CONTACT_EVENT, { detail: 'to:SECRET_SENTINEL_ABC' });
+      expectTrue(!serializeRecord(scrubbed, 2048).includes('SECRET_SENTINEL'), 'sentinel scrubbed');
+    }),
   ];
 }
 
 export function benchmarkChecks(): Check[] {
-  const makeStore = (): { store: BenchmarkStore; files: Map<string, string> } => {
+  const makeStore = (options: { requireEvidenceForScores?: boolean } = {}): { store: BenchmarkStore; files: Map<string, string> } => {
     const files = new Map<string, string>();
     const fs: BenchmarkFs = {
       readFile: async (p) => files.get(p) ?? null,
@@ -264,7 +431,7 @@ export function benchmarkChecks(): Check[] {
       },
       mkdir: async () => {},
     };
-    return { store: new BenchmarkStore('/mem/benchmark.jsonl', fs), files };
+    return { store: new BenchmarkStore('/mem/benchmark.jsonl', fs, options), files };
   };
 
   return [
@@ -323,6 +490,47 @@ export function benchmarkChecks(): Check[] {
       expectEqual((ok as { commitHash?: string }).commitHash, 'd347e703908d0406b7a7ef80e3a0e594d86b2215', 'sha roundtrip');
       const unavailable = validateBenchmarkRecord({ kind: 'run', schemaVersion: 1, runId: 'x', taskId: 't', provider: 'p', model: 'm', startedAt: 0, commitHash: 'UNAVAILABLE' });
       expectEqual((unavailable as { commitHash?: string }).commitHash, 'UNAVAILABLE', 'UNAVAILABLE accepted');
+    }),
+    // ---- v1.3 ASTRA-hardening (evidence-bound to real/v13-routing-verify.mjs) ----
+    check('benchmark.evidence-backing', 'v1.3: requireEvidenceForScores flags score claims; PASS evidence recovers', async () => {
+      // Default store: no evidenceBacked key written at all (back-compat shape).
+      const plain = makeStore();
+      await plain.store.init();
+      await plain.store.startRun({ runId: 'r0', taskId: 't0', taskCategory: 'unit', provider: 'p', model: 'm', profile: 'unit' });
+      const plainScore = await plain.store.recordScore({ runId: 'r0', qualityScore: 0.9 });
+      expectTrue(!('evidenceBacked' in plainScore), 'default writes no flag');
+      // Toggle ON: claim without verifier-PASS evidence ⇒ flagged false on score.
+      const flagged = makeStore({ requireEvidenceForScores: true });
+      await flagged.store.init();
+      await flagged.store.startRun({ runId: 'r1', taskId: 't1', taskCategory: 'unit', provider: 'p', model: 'm', profile: 'unit' });
+      const claim = await flagged.store.recordScore({ runId: 'r1', qualityScore: 0.9 });
+      expectEqual((claim as { evidenceBacked?: boolean }).evidenceBacked, false, 'claim without evidence flagged false');
+      expectTrue((flagged.files.get('/mem/benchmark.jsonl') ?? '').includes('"evidenceBacked":false'), 'flag persisted to JSONL');
+      // Final verification lands later — last-write-wins re-evaluation.
+      await flagged.store.finishRun('r1', { success: true, latencyMs: 10, verification: { validatorId: 'v', status: 'PASS' } });
+      const agg = flagged.store.aggregateModelPerformance();
+      expectEqual(agg[0].evidenceBackedScores, 1, 'claim recovered by PASS evidence');
+      // Validation: evidenceBacked must be boolean when present.
+      expectThrows(
+        () => validateBenchmarkRecord({ kind: 'score', schemaVersion: 1, runId: 'x', qualityScore: 0.5, scoredAt: 1, evidenceBacked: 'yes' }),
+        'non-boolean flag rejected',
+      );
+      const ok = validateBenchmarkRecord({ kind: 'score', schemaVersion: 1, runId: 'x', qualityScore: 0.5, scoredAt: 1, evidenceBacked: false });
+      expectEqual((ok as { evidenceBacked?: boolean }).evidenceBacked, false, 'boolean flag accepted');
+    }),
+    check('benchmark.evidence-aggregation', 'v1.3: aggregation exposes scoredSamples + evidenceBackedScores; evidence rule is verifier-PASS', () => {
+      expectEqual(isVerifierPassEvidence({ validatorId: 'v', status: 'PASS' }), true, 'PASS is evidence');
+      expectEqual(isVerifierPassEvidence({ validatorId: 'v', status: 'FAIL' }), false, 'FAIL is not evidence');
+      expectEqual(isVerifierPassEvidence(undefined), false, 'absence is not evidence');
+      const runs = [
+        { schemaVersion: 1 as const, kind: 'run' as const, runId: 'e1', taskId: 't', taskCategory: 'c', provider: 'p1', model: 'm1', profile: 'x', startedAt: 1, finishedAt: 2, success: true, qualityScore: 0.9, evidenceBacked: true },
+        { schemaVersion: 1 as const, kind: 'run' as const, runId: 'e2', taskId: 't', taskCategory: 'c', provider: 'p1', model: 'm1', profile: 'x', startedAt: 1, finishedAt: 3, success: true, qualityScore: 0.8, evidenceBacked: false },
+        { schemaVersion: 1 as const, kind: 'run' as const, runId: 'e3', taskId: 't', taskCategory: 'c', provider: 'p1', model: 'm1', profile: 'x', startedAt: 1, finishedAt: 4, success: true },
+      ];
+      const agg = aggregateRuns(runs);
+      expectEqual(agg.length, 1, 'one group');
+      expectEqual(agg[0].scoredSamples, 2, 'score claims counted');
+      expectEqual(agg[0].evidenceBackedScores, 1, 'evidence-backed subset counted');
     }),
   ];
 }
@@ -445,6 +653,56 @@ export function routerChecks(): Check[] {
       expectEqual(escalateEffort('low'), 'high', 'one-step escalation');
       expectEqual(escalateEffort('max'), 'max', 'max is terminal');
       expectEqual(escalateEffort('off'), 'low', 'off escalates to low');
+    }),
+    // ---- v1.3 ASTRA-hardening (evidence-bound to real/v13-routing-verify.mjs) ----
+    check('router.capability-label-passthrough', 'v1.3: router carries candidate labels onto the decision (carrier, not enforcer)', () => {
+      const labeled = runSelect([freeCandidate({ capabilityClass: 'routine', cotVisibility: 'terse' })]);
+      expectEqual(labeled.blocked, null, 'not blocked');
+      expectEqual(labeled.capabilityClass, 'routine', 'class label echoed verbatim');
+      expectEqual(labeled.cotVisibility, 'terse', 'visibility label carried');
+      // Unlabeled candidates keep the v1.2 decision shape (keys absent, not null).
+      const unlabeled = runSelect([freeCandidate()]);
+      expectTrue(!('capabilityClass' in unlabeled) && !('cotVisibility' in unlabeled), 'no labels → keys absent');
+      // Only the SELECTED candidate's labels are attached.
+      const mixed = runSelect([
+        freeCandidate(),
+        freeCandidate({ key: 'labeled::m', provider: 'labeled', model: 'm', failureDomain: 'labeled', quotaHeadroom: 0.2, capabilityClass: 'ROUTINE' }),
+      ]);
+      expectEqual(mixed.provider, 'synthetic-free', 'unlabeled peer wins');
+      expectTrue(!('capabilityClass' in mixed), 'unselected candidate labels not attached');
+    }),
+    check('router.anti-sandbagging-downweight', 'v1.3: unscored-evidence downweight flips selection to the evidence-backed peer', () => {
+      const claimed = freeCandidate({ key: 'claimed::m', provider: 'claimed', model: 'm', failureDomain: 'claimed', quotaHeadroom: 0.2 });
+      const perf = new Map([['claimed::m', { avgQuality: 0.99, samples: 20, evidenceBacked: false }]]);
+      // Without downweight the self-reported history wins outright.
+      const claimedWin = runSelect([claimed, freeCandidate()], { perf });
+      expectEqual(claimedWin.provider, 'claimed', 'claimed history wins at weight 1');
+      // Fixed 0.5 factor: the claim loses to the evidence-free peer — evidence > self-confidence.
+      const flipped = runSelect([claimed, freeCandidate()], {
+        config: { ...DEFAULT_ROUTER_CONFIG, unscoredEvidenceWeight: 0.5 },
+        perf,
+      });
+      expectEqual(flipped.provider, 'synthetic-free', 'evidence-backed peer wins after downweight');
+      expectTrue(flipped.unscoredEvidence?.some((u) => u.candidate === 'claimed::m' && u.factor === 0.5), 'downweighted ids+factors recorded');
+      expectTrue(flipped.reasonCodes.includes('UNSCORED_EVIDENCE_DOWNWEIGHT'), 'reason code present');
+      // Evidence-backed claims are NEVER downweighted.
+      const backedPerf = new Map([['claimed::m', { avgQuality: 0.99, samples: 20, evidenceBacked: true }]]);
+      const backed = runSelect([claimed, freeCandidate()], {
+        config: { ...DEFAULT_ROUTER_CONFIG, unscoredEvidenceWeight: 0.5 },
+        perf: backedPerf,
+      });
+      expectEqual(backed.provider, 'claimed', 'evidence-backed claim keeps full score');
+      expectTrue(!('unscoredEvidence' in backed), 'no downweight records for evidence-backed claims');
+    }),
+    check('router.unscored-default-backcompat', 'v1.3: downweight off by default; candidates without claims untouched', () => {
+      const perf = new Map([['claimed::m', { avgQuality: 0.99, samples: 20, evidenceBacked: false }]]);
+      const defaults = runSelect([freeCandidate({ key: 'claimed::m', provider: 'claimed', model: 'm', failureDomain: 'claimed', quotaHeadroom: 0.2 })], { perf });
+      expectTrue(!('unscoredEvidence' in defaults), 'default weight 1 writes no downweight records');
+      expectTrue(!defaults.reasonCodes.includes('UNSCORED_EVIDENCE_DOWNWEIGHT'), 'default weight 1 has no reason code');
+      // weight ≠ 1 but no benchmark claim on the candidate → nothing to distrust.
+      const explored = runSelect([freeCandidate()], { config: { ...DEFAULT_ROUTER_CONFIG, unscoredEvidenceWeight: 0.5 } });
+      expectEqual(explored.blocked, null, 'not blocked');
+      expectTrue(!('unscoredEvidence' in explored), 'no claims → no downweight');
     }),
   ];
 }
@@ -728,6 +986,95 @@ export function workflowChecks(): Check[] {
       expectEqual(high.closeGate, 'VERIFIER_PASS_REQUIRED', 'HIGH task requires verifier pass to close');
       const low = decideWorkflow(limits, baseInput);
       expectEqual(low.closeGate, 'NONE', 'LOW task closes freely');
+    }),
+    // ---- v1.3 ASTRA-hardening (evidence-bound to real/v13-workflow-verify.mjs) ----
+    check('workflow.a2a-contact-graph', 'v1.3: A2A contact graph — declared edges pass, out-of-graph flagged/blocked', () => {
+      expectTrue(AGENT_CONTACT_POLICIES.includes('LOG_ONLY') && AGENT_CONTACT_POLICIES.includes('DENY'), 'policies pinned');
+      // Empty graph = policy inert (behavior-preserving default, path-scope convention).
+      expectEqual(evaluateAgentContact(WORKFLOW_LIMIT_DEFAULTS, { from: 'a', to: 'b' }).reasonCode, 'NO_CONTACT_GRAPH', 'empty graph inert');
+      const graph = { agentContactPolicy: 'LOG_ONLY' as const, allowedContacts: [{ from: 'planner', to: 'executor' }] };
+      // Missing endpoints are not inter-agent contacts.
+      expectEqual(evaluateAgentContact(graph, { from: '', to: 'executor' }).reasonCode, 'NOT_INTER_AGENT', 'endpoints required');
+      // Declared directed edge (trim-exact, no heuristics).
+      expectEqual(evaluateAgentContact(graph, { from: ' planner ', to: 'executor' }).reasonCode, 'CONTACT_IN_GRAPH', 'in-graph passes');
+      // Directed: the reverse pair is NOT declared.
+      const reverse = evaluateAgentContact(graph, { from: 'executor', to: 'planner' });
+      expectEqual(reverse.reasonCode, 'CONTACT_OUTSIDE_GRAPH', 'directed edge enforced');
+      expectTrue(reverse.flagged && !reverse.blocked, 'LOG_ONLY audits without blocking');
+      // DENY blocks the channel pre-fact.
+      const deny = evaluateAgentContact({ ...graph, agentContactPolicy: 'DENY' }, { from: 'executor', to: 'planner' });
+      expectTrue(deny.flagged && deny.blocked, 'DENY blocks out-of-graph');
+      expectEqual(A2A_CONTACT_EVENT, 'a2a_contact', 'audit event pinned');
+      expectEqual(A2A_CONTACT_DENIED_REASON, 'a2a_contact_denied', 'deny reason pinned');
+    }),
+    check('workflow.overreach-ceiling', 'v1.3: overreach audit — risk ceiling, approval gate, path scope (labels only)', () => {
+      const limits = {
+        maxRiskLevel: 'MEDIUM' as const,
+        approvalRequiredFor: ['CYBER_OFFENSIVE'],
+        allowedPaths: ['src/**'],
+        blockedPaths: ['**/secrets/**'],
+      };
+      // 1. Risk ceiling: explicit level above the max is flagged.
+      const ceiling = evaluateOverreach(limits, { riskLevel: 'HIGH' });
+      expectTrue(ceiling.overreach && ceiling.reasonCodes.includes('RISK_ABOVE_MAX'), 'explicit risk above ceiling flagged');
+      expectEqual(ceiling.riskLevel, 'HIGH', 'effective risk recorded');
+      expectEqual(ceiling.maxRiskLevel, 'MEDIUM', 'ceiling recorded');
+      // Tool-name-derived risk (bash ⇒ HIGH) busts a LOW ceiling too.
+      expectTrue(
+        evaluateOverreach({ ...limits, maxRiskLevel: 'LOW' }, { requestedTools: ['bash'] }).reasonCodes.includes('RISK_ABOVE_MAX'),
+        'derived risk above ceiling',
+      );
+      // 2. Approval gate: listed class without flag flags; class match is normalized.
+      const approval = evaluateOverreach(limits, { taskClass: 'cyber_offensive' });
+      expectTrue(approval.reasonCodes.includes('APPROVAL_REQUIRED') && approval.approvalRequired, 'approval required without flag');
+      expectEqual(approval.matchedTaskClass, 'CYBER_OFFENSIVE', 'task class normalized');
+      expectTrue(
+        !evaluateOverreach(limits, { taskClass: 'CYBER_OFFENSIVE', approvalGranted: true }).reasonCodes.includes('APPROVAL_REQUIRED'),
+        'approval flag satisfies gate',
+      );
+      // 3. Path scope: config glob NAMES reported, never path values.
+      const paths = evaluateOverreach(limits, { requestedPaths: ['src/app/x.ts', 'config/secrets/key.pem'] });
+      expectTrue(paths.reasonCodes.includes('PATH_SCOPE_EXCEEDED'), 'out-of-scope path flagged');
+      expectTrue(paths.matchedGlobs.includes('**/secrets/**'), 'blocked glob reported');
+      expectTrue(!JSON.stringify(paths).includes('config/secrets/key.pem'), 'path values never reported');
+      // Clean in-scope request never flags.
+      expectEqual(
+        evaluateOverreach(limits, { requestedTools: ['read-file'], requestedPaths: ['src/app/x.ts'] }).overreach,
+        false,
+        'in-scope clean request',
+      );
+      expectEqual(OVERREACH_EVENT, 'overreach_suspected', 'audit event pinned');
+    }),
+    check('workflow.delegation-risk-classifier', 'v1.3: delegation classifier mirrors policy HIGH set + MEDIUM delegation tier', () => {
+      expectEqual(classifyDelegationToolRisk('bash'), 'HIGH', 'command HIGH');
+      expectEqual(classifyDelegationToolRisk('file-write'), 'HIGH', 'write HIGH');
+      expectEqual(classifyDelegationToolRisk('web-fetch'), 'HIGH', 'network HIGH');
+      expectEqual(classifyDelegationToolRisk('send_message'), 'MEDIUM', 'delegation surface MEDIUM');
+      expectEqual(classifyDelegationToolRisk('schedule-agent'), 'MEDIUM', 'orchestration surface MEDIUM');
+      expectEqual(classifyDelegationToolRisk('read-file'), 'LOW', 'read-only LOW');
+      expectTrue(RISK_LEVELS.length === 3, 'three risk levels pinned');
+    }),
+    check('workflow.v13-limits-validation', 'v1.3: contact/overreach limits validate; defaults behavior-preserving', () => {
+      // Defaults: policy inert, ceiling unchanged, no approval classes.
+      expectEqual(WORKFLOW_LIMIT_DEFAULTS.agentContactPolicy, 'LOG_ONLY', 'contact policy default');
+      expectEqual(WORKFLOW_LIMIT_DEFAULTS.allowedContacts.length, 0, 'empty graph default');
+      expectEqual(WORKFLOW_LIMIT_DEFAULTS.maxRiskLevel, 'HIGH', 'ceiling default unchanged');
+      expectEqual(WORKFLOW_LIMIT_DEFAULTS.approvalRequiredFor.length, 0, 'no approval classes default');
+      // Invalid values rejected deterministically.
+      expectThrows(() => validateWorkflowLimits({ agentContactPolicy: 'BLOCK' as never }), 'bad contact policy rejected');
+      expectThrows(() => validateWorkflowLimits({ allowedContacts: [{ from: '', to: 'x' }] }), 'empty edge endpoint rejected');
+      expectThrows(() => validateWorkflowLimits({ maxRiskLevel: 'EXTREME' as never }), 'bad risk level rejected');
+      expectThrows(() => validateWorkflowLimits({ approvalRequiredFor: [''] }), 'empty task class rejected');
+      // Valid values round-trip.
+      const limits = validateWorkflowLimits({
+        agentContactPolicy: 'DENY',
+        allowedContacts: [{ from: 'planner', to: 'executor' }],
+        maxRiskLevel: 'MEDIUM',
+        approvalRequiredFor: ['CYBER_OFFENSIVE'],
+      });
+      expectEqual(limits.agentContactPolicy, 'DENY', 'valid config accepted');
+      expectEqual(limits.allowedContacts.length, 1, 'graph accepted');
+      expectTrue(WorkflowConfigError !== undefined, 'error type present');
     }),
   ];
 }

@@ -68,6 +68,10 @@ const OFFICIAL_SEAMS = new Set([
   'subagent/end',
   'workflow/start',
   'workflow/end',
+  // v1.3: pinned-verified workflow agent lifecycle seam (V13-B) — emit site
+  // packages/workflow/workflow/src/index.ts:68, pin d347e703
+  // (WorkflowRunInfo + WorkflowAgentInfo{seq,label,phase?,childId}).
+  'workflow/agent-start',
 ]);
 
 const PRODUCTION_CONFIGS = [

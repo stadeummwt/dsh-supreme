@@ -2,6 +2,108 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.3.0 — ASTRA-hardening (v1.3)
+
+Seven deterministic hardening features from the ASTRA-1 backlog
+([`research/gpt6-astra-2026-09.md`](./research/gpt6-astra-2026-09.md) §7 —
+Sol fail mode #1: retry-around-deny; Astra residual: broader permission than
+the task requires; sandbagged benchmark claims). Every feature binds to a real
+pinned upstream seam, ships engine checks, and is proven end-to-end by three
+dedicated verifiers. Zero new plugins, zero new dependencies, upstream still
+unpatched.
+
+### Added — supreme-policy (4 features)
+
+- **CoT visibility profiles + risk-gated CoT** (`cotVisibilityProfiles`,
+  `riskGatedCoT`): a route declared `cotVisibility: none` (Astra-class models
+  legitimately produce empty traces) NEVER denies on `cot_missing` — ENFORCE
+  downgrades to audit-only (`COT_VISIBILITY_NONE_DOWNGRADED`). Resolution
+  order: explicit signal > route profile > `verbose` default. With
+  `riskGatedCoT`, ENFORCE applies only to HIGH-risk tools (deterministic
+  command/network/write name classifier); non-HIGH tools keep AUDIT.
+- **Deny-circumvention guard** (`denyCircumventionGuard: true` — the one
+  deliberate default-ON): after a deny on `tools/pre-execute`, a same-shape
+  retry (tool name + argument NAMES/TYPES signature — values can never enter
+  it) is refused with reason code `deny_retry` + audit event. First-time calls
+  are never affected; `resetDenyCircumvention(sessionId)` is the documented
+  operator escape hatch.
+- **Encoding-blob taint scan** (`enableEncodingScan: false` default): detects
+  ≥256-char contiguous base64/hex runs in tool arguments (hex is more specific
+  and reported first; one class per string keeps reports deterministic).
+  Extends the v1.2 taint surface — same `taint_detected` event, same
+  `taintPolicy` enforcement, same value-free rule (argument NAME + run LENGTH
+  only; without encoding hits the detail is byte-identical to v1.2).
+- **Capability-class gate** (`capabilityClassGate: 'OFF'` default,
+  `sanctionedCapabilityClasses`, `labCapabilityClassAllowlist`): requests
+  carrying the shared `CapabilitySignal.capabilityClass` label are gated
+  OFF/AUDIT/ENFORCE. The LAB allowlist is ADDITIVE and binds only on the LAB
+  floor (no leak to STANDARD); there is NO implicit `ROUTINE` exemption — a
+  self-declared label can only RESTRICT, never grant.
+- Shared contract exported: `CapabilitySignal { capabilityClass?, cotVisibility? }`
+  (type-only import in the router — no runtime coupling).
+
+### Added — supreme-workflow-policy (2 features)
+
+- **A2A contact policy** (`agentContactPolicy: 'LOG_ONLY'`,
+  `allowedContacts`): the DECLARED contact graph is a directed `{ from, to }`
+  edge list (trim-exact ids/roles; empty graph = policy inert).
+  Out-of-graph inter-agent contacts (spawn/message) are audited as
+  `a2a_contact`; under `DENY` the pre-fact `tools/pre-execute` waterfall
+  refuses the call with `a2a_contact_denied`. Emit-mode lifecycle seams
+  (`subagent/start`, `workflow/agent-start`) are post-fact and DETECT-only.
+- **Overreach audit** (`maxRiskLevel: 'HIGH'`, `approvalRequiredFor`):
+  delegation requests above the risk ceiling (explicit level or tool-name
+  derived, MEDIUM delegation tier added), listed task classes without an
+  approval flag, or paths outside the v1.2 scope are audited as
+  `overreach_suspected` — labels, levels, flags, config globs; never content.
+
+### Added — supreme-router + supreme-benchmark (1 feature, two halves)
+
+- **Anti-sandbagging routing**: benchmark score claims are flagged
+  `evidenceBacked: false` unless the scored run carries verifier-PASS evidence
+  (`requireEvidenceForScores: false` default; last-write-wins re-evaluation
+  when verification lands late; `scoredSamples`/`evidenceBackedScores` added
+  to aggregates and the published JSON schema). The router applies a FIXED
+  multiplicative downweight `unscoredEvidenceWeight` (default `1` =
+  back-compat; e.g. `0.5` halves unevidenced claims) and records the ids +
+  factors on the decision (`unscored_evidence` events carry ids only). The
+  router also carries the shared `CapabilitySignal` labels from candidates
+  onto the selected `RouteDecision` (carrier, not enforcer).
+
+### Added — suite, compositions, surface audit
+
+- **+17 Level-A engine checks** (policy +7, observability +1, benchmark +2,
+  router +3, workflow +4): every v1.3 feature is now exercised at engine
+  level in the keyless suite — **78/78 checks** (was 61).
+- **`real/v13-policy-verify.mjs`** (`bun run v13:verify` runs all three) —
+  85 probes: `V13_POLICY_E2E_COMPLETE`; **`real/v13-workflow-verify.mjs`** —
+  82 probes: `V13_WORKFLOW_E2E_COMPLETE`; **`real/v13-routing-verify.mjs`** —
+  17 probes: `V13_ROUTING_E2E_COMPLETE`. All run the REAL engines + REAL
+  pinned-cordis adapters (no upstream build needed).
+- **Composition fragments** now showcase the v1.3 keys with safe defaults:
+  standard/supreme run the new policy layers audit-only; lab demos ENFORCE +
+  LAB allowlist, the CoT-visibility profile, `unscoredEvidenceWeight: 0.5`
+  and a declared contact graph; core pins the deliberate default-ON
+  deny-circumvention guard. Production rows stay behavior-conservative.
+- **Surface-audit sync**: the pinned-verified `workflow/agent-start` seam
+  (packages/workflow/workflow/src/index.ts:68 @ d347e703) was added to
+  `OFFICIAL_SEAMS` and the observability pinned-event map; the workflow
+  adapter's registration is a string literal again (the v1.2
+  disclosed-constant workaround removed).
+- `dist/plugins/` rebuilt for the four touched plugins (supreme-policy,
+  supreme-workflow-policy, supreme-router, supreme-benchmark) — real-boot
+  gates run against the v1.3 code.
+
+### Verified status (v1.3)
+
+- Suite: **78/78 Level-A checks, 5/5 real-loader boots, VERDICT COMPLETE**
+  (config hygiene + pinned refs + six-surface audit + schema contract all
+  PASS; sentinel leaks 0).
+- E2E: `V13_POLICY_E2E_COMPLETE` (85/85) · `V13_WORKFLOW_E2E_COMPLETE`
+  (82/82) · `V13_ROUTING_E2E_COMPLETE` (17/17) · `BUNDLE_E2E_COMPLETE` ·
+  `COMPOSITIONS_E2E_COMPLETE` · `V3_CONFIG_REVIEW_EVIDENCE` ·
+  `V12_E2E_COMPLETE` — upstream untouched (`patches=0`).
+
 ## 1.2.4 — CI fix 2: upstream resolution in published/CI layout
 
 Follow-up to 1.2.3's CI fixes: the full-suite job then reached the suite but

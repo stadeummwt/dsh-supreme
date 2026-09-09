@@ -20,10 +20,22 @@
 #
 # Fixture plugins (supreme-minimal-probe, supreme-boot-probe, supreme-gate-
 # driver) are NOT part of the bundle and are intentionally absent here.
+#
+# v1.3 ASTRA-hardening keys (supreme-policy): cotVisibilityProfiles,
+# riskGatedCoT, denyCircumventionGuard, enableEncodingScan, capabilityClassGate,
+# sanctionedCapabilityClasses, labCapabilityClassAllowlist. CORE stays the
+# governance floor, so every scan/gate below inherits its OFF default from the
+# bundle layer; the one deliberate v1.3 default-ON is pinned explicitly here —
+# the deny-circumvention guard, which fires ONLY on a same-shape retry of a
+# call that was already denied on the same session (first-time calls are never
+# affected). See src/plugins/supreme-policy/README.md for the full table.
 
 - id: supreme-policy
   config:
     executionClass: CORE
+    # v1.3 (default true): flag same-shape retries of already-denied calls
+    # (reason code `deny_retry`). Values never enter the signature.
+    denyCircumventionGuard: true
 
 - id: supreme-observability
   disabled: true

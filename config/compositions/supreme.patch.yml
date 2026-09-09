@@ -31,6 +31,10 @@
 - id: supreme-policy
   config:
     executionClass: SUPREME
+    # v1.3: audit-only ASTRA posture (same as standard — ENFORCE and sanction
+    # lists stay operator choices; see the lab fragment for the enforcing demo).
+    enableEncodingScan: true
+    capabilityClassGate: AUDIT
 
 - id: supreme-observability
   config:
@@ -39,6 +43,10 @@
 - id: supreme-benchmark
   config:
     dataDir: '.supreme-data/benchmark'
+    # v1.3 anti-sandbagging: quality-score claims without verifier-PASS
+    # evidence are flagged `evidenceBacked: false` on the score + run records
+    # (flag only — scores are never rewritten).
+    requireEvidenceForScores: true
 
 - id: supreme-fake-llm
   config:
@@ -82,4 +90,12 @@
         priority: 60
 
 - id: supreme-workflow-policy
-  config: {}
+  config:
+    # v1.3 A2A + overreach keys pinned at their behavior-preserving defaults:
+    # the graph is EMPTY so the contact policy stays inert, and the HIGH risk
+    # ceiling is unchanged. Declare edges / lower the ceiling from your own
+    # patch layer (LOG_ONLY audits out-of-graph contacts; DENY blocks them).
+    agentContactPolicy: LOG_ONLY
+    allowedContacts: []
+    maxRiskLevel: HIGH
+    approvalRequiredFor: []

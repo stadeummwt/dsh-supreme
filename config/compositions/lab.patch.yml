@@ -26,6 +26,21 @@
   config:
     executionClass: LAB
     allowPaid: true
+    # v1.3 ASTRA posture — LAB is the ONLY fragment where the enforcing demo
+    # ships: unsanctioned capability classes are DENIED except the declared
+    # LAB allowlist (additive, binds only because executionClass=LAB).
+    enableEncodingScan: true
+    capabilityClassGate: ENFORCE
+    labCapabilityClassAllowlist:
+      - DESTRUCTIVE_OPS
+    # v1.3 CoT-visibility demo: a route declared `none` never denies on
+    # cot_missing (downgraded to audit), and ENFORCE applies only to
+    # HIGH-risk tools under riskGatedCoT. Both keys are relaxations only —
+    # with reasoningTracePolicy at its OFF default they are inert until you
+    # turn the CoT gate on.
+    cotVisibilityProfiles:
+      astra-demo-route: none
+    riskGatedCoT: true
 
 - id: supreme-observability
   config:
@@ -34,6 +49,9 @@
 - id: supreme-benchmark
   config:
     dataDir: '.supreme-data/benchmark'
+    # v1.3 anti-sandbagging: score claims without verifier-PASS evidence are
+    # flagged `evidenceBacked: false` (flag only — scores are never rewritten).
+    requireEvidenceForScores: true
 
 - id: supreme-fake-llm
   config:
@@ -62,6 +80,10 @@
             capabilities: [chat]
             contextWindow: 131072
             failureDomain: synthetic-paid
+    # v1.3 anti-sandbagging: candidates whose benchmark scores lack
+    # verifier-PASS evidence are routed with this FIXED downweight factor
+    # (0.5 halves the score). 1 disables. Deterministic, no ML.
+    unscoredEvidenceWeight: 0.5
 
 - id: supreme-verifier
   config:
@@ -80,3 +102,14 @@
 - id: supreme-workflow-policy
   config:
     maxConcurrentAgents: 4
+    # v1.3 A2A + overreach demo: one DECLARED directed edge; contacts outside
+    # the graph are audited (`a2a_contact`), LOG_ONLY never blocks. Delegations
+    # above the MEDIUM ceiling or touching blocked paths are audited as
+    # `overreach_suspected` (labels/globs only, never path values).
+    agentContactPolicy: LOG_ONLY
+    allowedContacts:
+      - from: orchestrator
+        to: researcher
+    maxRiskLevel: MEDIUM
+    approvalRequiredFor:
+      - DESTRUCTIVE_OPS

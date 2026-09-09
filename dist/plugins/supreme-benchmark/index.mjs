@@ -30,6 +30,9 @@ class BenchmarkValidationError extends Error {
     this.name = "BenchmarkValidationError";
   }
 }
+function isVerifierPassEvidence(verification) {
+  return verification?.status === "PASS";
+}
 function assertCondition(ok, issues, message) {
   if (!ok)
     issues.push(message);
@@ -63,10 +66,16 @@ function validateBenchmarkRecord(raw) {
     if (rec.failureClass !== undefined) {
       assertCondition(typeof rec.failureClass === "string" && FAILURE_CLASSES.includes(rec.failureClass), issues, "failureClass must be a known FailureClass");
     }
+    if (rec.evidenceBacked !== undefined) {
+      assertCondition(typeof rec.evidenceBacked === "boolean", issues, "evidenceBacked must be a boolean");
+    }
   } else if (kind === "score") {
     assertCondition(typeof rec.runId === "string", issues, "runId required");
     assertCondition(typeof rec.qualityScore === "number" && rec.qualityScore >= 0 && rec.qualityScore <= 1, issues, "qualityScore must be within [0,1]");
     assertCondition(typeof rec.scoredAt === "number", issues, "scoredAt required");
+    if (rec.evidenceBacked !== undefined) {
+      assertCondition(typeof rec.evidenceBacked === "boolean", issues, "evidenceBacked must be a boolean");
+    }
   } else {
     issues.push("kind must be task|run|score");
   }
@@ -99,6 +108,8 @@ function aggregateRuns(runs) {
         failureBreakdown[run.failureClass] = (failureBreakdown[run.failureClass] ?? 0) + 1;
       }
     }
+    const scoredRuns = bucket.filter((r) => typeof r.qualityScore === "number");
+    const evidenceBackedScores = scoredRuns.filter((r) => r.evidenceBacked === true).length;
     out.push({
       provider,
       model,
@@ -106,7 +117,9 @@ function aggregateRuns(runs) {
       successRate: bucket.length > 0 ? successes / bucket.length : 0,
       avgQuality: qualities.length > 0 ? qualities.reduce((a, b) => a + b, 0) / qualities.length : null,
       avgLatencyMs: latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
-      failureBreakdown
+      failureBreakdown,
+      scoredSamples: scoredRuns.length,
+      evidenceBackedScores
     });
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
@@ -121,9 +134,11 @@ class BenchmarkStore {
   corruptLines = 0;
   queue = Promise.resolve();
   loaded = false;
-  constructor(filePath, fsImpl) {
+  requireEvidenceForScores;
+  constructor(filePath, fsImpl, options = {}) {
     this.filePath = filePath;
     this.fsImpl = fsImpl;
+    this.requireEvidenceForScores = options.requireEvidenceForScores === true;
   }
   async init() {
     if (this.loaded)
@@ -209,6 +224,9 @@ class BenchmarkStore {
     if (!run)
       return;
     Object.assign(run, outcome, { finishedAt: outcome.finishedAt ?? Date.now() });
+    if (this.requireEvidenceForScores && typeof run.qualityScore === "number") {
+      run.evidenceBacked = isVerifierPassEvidence(run.verification);
+    }
     await this.persist(run);
     return run;
   }
@@ -216,18 +234,23 @@ class BenchmarkStore {
     if (input.qualityScore < 0 || input.qualityScore > 1) {
       throw new BenchmarkValidationError(["qualityScore must be within [0,1]"]);
     }
+    const run = this.runs.find((r) => r.runId === input.runId);
+    const evidenceBacked = this.requireEvidenceForScores ? isVerifierPassEvidence(run?.verification) : undefined;
     const score = {
       schemaVersion: 1,
       kind: "score",
       runId: input.runId,
       qualityScore: input.qualityScore,
       validatorId: input.validatorId,
-      scoredAt: input.scoredAt ?? Date.now()
+      scoredAt: input.scoredAt ?? Date.now(),
+      ...evidenceBacked !== undefined ? { evidenceBacked } : {}
     };
     await this.persist(score);
-    const run = this.runs.find((r) => r.runId === input.runId);
-    if (run)
+    if (run) {
       run.qualityScore = score.qualityScore;
+      if (evidenceBacked !== undefined)
+        run.evidenceBacked = evidenceBacked;
+    }
     return score;
   }
   queryHistory(filter = {}) {
@@ -270,7 +293,8 @@ var name = "supreme-benchmark";
 var inject = [];
 var Config = z.object({
   dataDir: z.string().default("dsh-supreme/data/benchmark"),
-  fileName: z.string().default("benchmark.jsonl")
+  fileName: z.string().default("benchmark.jsonl"),
+  requireEvidenceForScores: z.boolean().default(false)
 });
 function apply(ctx, config) {
   const fs = process.getBuiltinModule("node:fs").promises;
@@ -287,7 +311,9 @@ function apply(ctx, config) {
       return;
     })
   };
-  const store = new BenchmarkStore(resolve(config.dataDir, config.fileName), fsImpl);
+  const store = new BenchmarkStore(resolve(config.dataDir, config.fileName), fsImpl, {
+    requireEvidenceForScores: config.requireEvidenceForScores
+  });
   const ready = store.init();
   const service = {
     recordTask: async (task) => {
@@ -310,7 +336,14 @@ function apply(ctx, config) {
     },
     recordScore: async (input) => {
       await ready;
-      await store.recordScore(input);
+      const score = await store.recordScore(input);
+      if (score.evidenceBacked === false) {
+        ctx.get("supremeObservability")?.record("unscored_evidence", {
+          recordId: score.runId,
+          kind: "score",
+          reason: "score_without_verifier_pass"
+        });
+      }
     },
     queryHistory: (filter) => store.queryHistory(filter),
     aggregateModelPerformance: () => store.aggregateModelPerformance(),

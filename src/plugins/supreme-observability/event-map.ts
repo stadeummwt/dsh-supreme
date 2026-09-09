@@ -18,6 +18,7 @@
  * | subagent/end                | packages/subagent/subagent/src/index.ts:~154                   | emit     |
  * | workflow/start              | packages/workflow/workflow/src/index.ts:~37                    | emit     |
  * | workflow/end                | packages/workflow/workflow/src/index.ts:~42                    | emit     |
+ * | workflow/agent-start        | packages/workflow/workflow/src/index.ts:~68                    | emit     |
  *
  * Session-log event types (reached via `session/event`, declared in
  * packages/core/session/src/types.ts:260-376 and compaction/src/types.ts):

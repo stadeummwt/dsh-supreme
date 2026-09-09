@@ -45,6 +45,13 @@ const candidateModelSchema = z.object({
   capabilities: z.array(z.string()).default([]),
   contextWindow: z.number().int().min(0).default(0),
   failureDomain: z.string().default('default'),
+  /**
+   * v1.3 CapabilitySignal labels (contract with supreme-policy/engine.ts).
+   * Optional, config-owned; the router only CARRIES them on the decision
+   * record — enforcement lives in policy. Declared keys arrive (no strip).
+   */
+  capabilityClass: z.string().min(1).max(64).optional(),
+  cotVisibility: z.enum(['verbose', 'terse', 'none']).optional(),
 });
 
 const candidateProviderSchema = z.object({
@@ -83,6 +90,12 @@ export const Config = z.object({
   /** v1.2: RM0-first — score only the cheapest eligible cost class (policy gates still run first). */
   costFirst: z.boolean().default(true),
   /**
+   * v1.3 anti-sandbagging: fixed downweight for candidates whose benchmark
+   * scores lack verifier-PASS evidence. Default 1 = disabled (back-compat);
+   * e.g. 0.5 halves the routing score of such candidates. Deterministic.
+   */
+  unscoredEvidenceWeight: z.number().min(0).max(1).default(1),
+  /**
    * v1.2: deterministic reasoning-effort pacing over the agent/request seam.
    * Levels are the PINNED DeepSeek adapter set: off | low | high | max
    * (anything else is rejected upstream with UNSUPPORTED_REASONING_EFFORT).
@@ -112,6 +125,8 @@ interface ResolvedCandidateConfig {
     capabilities: string[];
     contextWindow: number;
     failureDomain: string;
+    capabilityClass?: string;
+    cotVisibility?: 'verbose' | 'terse' | 'none';
   }>;
 }
 
@@ -160,6 +175,7 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     minQuotaHeadroom: config.minQuotaHeadroom,
     circuit: config.circuit as CircuitConfig,
     costFirst: config.costFirst,
+    unscoredEvidenceWeight: config.unscoredEvidenceWeight,
   };
   const effortPacing: EffortPacingConfig = {
     enabled: config.effortPacing.enabled,
@@ -210,10 +226,20 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
       }
 
       // Historical performance (bounded exploration until min samples).
+      // v1.3: benchmark aggregates also carry score-evidence counts — a
+      // candidate whose quality claims are not fully verifier-PASS-backed is
+      // marked evidenceBacked:false so the engine can apply the fixed
+      // anti-sandbagging downweight (see unscoredEvidenceWeight).
       const perf = new Map<string, CandidateModelPerf>();
       try {
         for (const agg of deps.supremeBenchmark.aggregateModelPerformance()) {
-          perf.set(`${agg.provider}::${agg.model}`, { avgQuality: agg.avgQuality, samples: agg.samples });
+          const scoredSamples = agg.scoredSamples ?? 0;
+          const evidenceBackedScores = agg.evidenceBackedScores ?? 0;
+          perf.set(`${agg.provider}::${agg.model}`, {
+            avgQuality: agg.avgQuality,
+            samples: agg.samples,
+            evidenceBacked: scoredSamples > 0 ? evidenceBackedScores === scoredSamples : true,
+          });
         }
       } catch {
         // Empty/failed history → exploration mode.
@@ -244,6 +270,8 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
             failureDomain: model.failureDomain,
             providerAvailable: liveProviders.includes(entry.provider),
             modelValid,
+            ...(model.capabilityClass !== undefined ? { capabilityClass: model.capabilityClass } : {}),
+            ...(model.cotVisibility !== undefined ? { cotVisibility: model.cotVisibility } : {}),
           });
         }
       }
@@ -262,10 +290,23 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
         routeDecisionId: decision.decisionId,
         provider: decision.provider,
         model: decision.model,
+        // v1.3 CapabilitySignal: labels only (never content) — policy consumes.
+        capabilityClass: decision.capabilityClass,
+        cotVisibility: decision.cotVisibility,
         detail: decision.blocked
           ? `blocked:${decision.reasonCodes.filter((r) => r.startsWith('GATE_FAILED')).length}gates`
           : `score:${decision.score ?? 0}`,
       });
+
+      // v1.3 anti-sandbagging audit: one event per candidate that received the
+      // fixed downweight (candidate id + applied factor only — never scores).
+      for (const entry of decision.unscoredEvidence ?? []) {
+        deps.supremeObservability.record('unscored_evidence', {
+          candidate: entry.candidate,
+          appliedFactor: entry.factor,
+          routeDecisionId: decision.decisionId,
+        });
+      }
 
       return decision;
     },

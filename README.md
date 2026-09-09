@@ -9,8 +9,8 @@
 *"ECC gives your harness breadth. Supreme gives it a conscience."*
 
 [![CI](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml/badge.svg)](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml)
-![suite](https://img.shields.io/badge/suite-61%2F61%20%E2%9C%94%205%2F5%20boots-brightgreen)
-![E2E](https://img.shields.io/badge/E2E-5%20verdicts%20green-success)
+![suite](https://img.shields.io/badge/suite-78%2F78%20%E2%9C%94%205%2F5%20boots-brightgreen)
+![E2E](https://img.shields.io/badge/E2E-8%20verdicts%20green-success)
 ![upstream](https://img.shields.io/badge/upstream-d347e703908d%20%7C%20patches%200-blue)
 ![leaks](https://img.shields.io/badge/secret%20sentinel%20leaks-0-success)
 ![schemas](https://img.shields.io/badge/JSON%20schemas-3%20published-8A2BE2)
@@ -20,7 +20,7 @@
 
 **Install** · `dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme`
 
-[Quick install](#-60-second-install) · [Why Supreme](#-why-supreme) · [The seven plugins](#-the-seven-governance-plugins) · [Proof wall](#-proof-wall--every-verdict-runnable) · [v1.2 features](#-v12-governance-features) · [Docs](#-documentation-map)
+[Quick install](#-60-second-install) · [Why Supreme](#-why-supreme) · [The seven plugins](#-the-seven-governance-plugins) · [Proof wall](#-proof-wall--every-verdict-runnable) · [v1.3 features](#-v13-astra-hardening-features) · [v1.2 features](#-v12-governance-features) · [Docs](#-documentation-map)
 
 </div>
 
@@ -47,7 +47,7 @@ cost gates, secret scrubbing) is deterministic code, not model judgment.
 | Markdown evidence | **Published JSON Schemas** + append-only JSONL evidence stores |
 | Touches core or monkey-patches | **Zero upstream patches** — pinned upstream, worktree clean, verified every run |
 | Security as a README paragraph | **Six-surface security audit** (prompts · hooks · MCP · permissions · secrets · agent files) in CI |
-| No ML dependency | Also **no ML** — deterministic counting, globs and comparisons only. Speed is a feature: router decision ≈ **0.02 ms / 1k iterations** |
+| No ML dependency | Also **no ML** — deterministic counting, globs and comparisons only. Speed is a feature: router decision ≈ **0.02–0.03 ms / 1k iterations** |
 
 > **The core rule of this repo:** *bukti sebenar > klaim* — real evidence over
 > claims. If a statement here can't be re-run by you, it's marked as a claim,
@@ -96,13 +96,13 @@ creep without a proven blocker.
 
 | # | Plugin | Service | What it enforces |
 |---|---|---|---|
-| 1 | [`supreme-policy`](./src/plugins/supreme-policy/) | `supremePolicy` | Cost-class / risk / delegation admission. `UNKNOWN` cost ⇒ **DENY**. Paid & trial overrides are LAB-only. Unicode-taint detection + denial. CoT presence gate. |
+| 1 | [`supreme-policy`](./src/plugins/supreme-policy/) | `supremePolicy` | Cost-class / risk / delegation admission. `UNKNOWN` cost ⇒ **DENY**. Paid & trial overrides are LAB-only. Unicode-taint + encoding-blob detection & denial. CoT presence gate with visibility profiles + risk gating. Deny-circumvention (`deny_retry`) guard. Capability-class gate. |
 | 2 | [`supreme-observability`](./src/plugins/supreme-observability/) | `supremeObservability` | Append-only JSONL metadata log over official DSH event seams. Allowlisted fields, **secret-sentinel scrub**, fail-open. |
-| 3 | [`supreme-benchmark`](./src/plugins/supreme-benchmark/) | `supremeBenchmark` | Reproducible task/run/score JSONL evidence; per-model aggregation that feeds the router; `commitHash` + `irVersion` provenance binding. |
-| 4 | [`supreme-router`](./src/plugins/supreme-router/) | `supremeRouter` | Deterministic selection: **8 hard gates** → weighted scoring → **RM0-first** cost-class rule → optional verifier-failure-driven effort pacing. |
+| 3 | [`supreme-benchmark`](./src/plugins/supreme-benchmark/) | `supremeBenchmark` | Reproducible task/run/score JSONL evidence; per-model aggregation that feeds the router; `commitHash` + `irVersion` provenance binding; `evidenceBacked` anti-sandbagging flag. |
+| 4 | [`supreme-router`](./src/plugins/supreme-router/) | `supremeRouter` | Deterministic selection: **8 hard gates** → weighted scoring → **RM0-first** cost-class rule → `unscoredEvidenceWeight` anti-sandbagging downweight → optional verifier-failure-driven effort pacing. Carries `CapabilitySignal` labels onto decisions. |
 | 5 | [`supreme-verifier`](./src/plugins/supreme-verifier/) | `supremeVerifier` | Deterministic validator registry (exact-text · regex · JSON · file · command). **Evidence > model self-confidence.** |
 | 6 | [`supreme-memory-policy`](./src/plugins/supreme-memory-policy/) | `supremeMemoryPolicy` | Memory *selection policy*: confidence floor, injection cap, relevance ranking, bounded append-only note ledger (credential-bearing notes rejected at admission). |
-| 7 | [`supreme-workflow-policy`](./src/plugins/supreme-workflow-policy/) | `supremeWorkflowPolicy` | When/how `ctx.subagents` / `ctx.workflowEngine` may run: limits, degradation ladder, glob **path scoping** (blocked beats allowed), verifier-gated close for HIGH-risk tasks. |
+| 7 | [`supreme-workflow-policy`](./src/plugins/supreme-workflow-policy/) | `supremeWorkflowPolicy` | When/how `ctx.subagents` / `ctx.workflowEngine` may run: limits, degradation ladder, glob **path scoping** (blocked beats allowed), verifier-gated close for HIGH-risk tasks, **A2A contact graph** + **overreach audit**. |
 
 Four support plugins (`supreme-minimal-probe`, `supreme-boot-probe`,
 `supreme-gate-driver`, `supreme-fake-llm`) exist **only** as test fixtures for
@@ -116,23 +116,27 @@ Don't trust this README. Run these:
 
 | Command | Verdict marker | What it proves |
 |---|---|---|
-| `bun run suite` | `COMPLETE` | **61/61** Level-A checks + **5/5** real-loader boots + v1.2 audit gates |
+| `bun run suite` | `COMPLETE` | **78/78** Level-A checks + **5/5** real-loader boots + v1.2/v1.3 audit gates |
+| `bun run v13:verify` | `V13_POLICY_E2E_COMPLETE` · `V13_WORKFLOW_E2E_COMPLETE` · `V13_ROUTING_E2E_COMPLETE` | All 7 v1.3 ASTRA features end-to-end: real engines + real pinned-cordis adapters (85 + 82 + 17 probes) |
 | `bun run bundle:verify` | `BUNDLE_E2E_COMPLETE` | Real `dsh plugin add` → reconciler → boot → 13 services → user-patch override wins → clean dispose |
 | `bun run composition:verify` | `COMPOSITIONS_E2E_COMPLETE` | All 4 fragments: service presence **and absence**, relative `dataDir` write-through |
 | `bun run v12:verify` | `V12_E2E_COMPLETE` | Every v1.2 config key **arrives at its service** + functional probes (taint deny, effort escalation/recover, path scope, close gate, ledger) |
 | `bun run v3:verify` | `V3_CONFIG_REVIEW_EVIDENCE` | The silent-strip trap, live: a wrong config loses 5/6 keys → corrected config enforces 6/6 |
 
 ```text
-Level A unit checks      61/61 PASS   (policy 9 · observability 6 · benchmark 6 · router 13
-                                       verifier 7 · memory 9 · workflow 11)
+Level A unit checks      78/78 PASS   (policy 16 · observability 7 · benchmark 8 · router 16
+                                       verifier 7 · memory 9 · workflow 15)
+v1.3 E2E probes          184/184      (policy 85 · workflow 82 · routing 17 — real engines,
+                                       real pinned-cordis adapters, no upstream build needed)
 Real-loader boots        5/5 PASS     (supreme-minimal, core, standard, supreme, lab)
-  boot times             supreme-minimal ~55 ms · core/standard/supreme/lab ~750–1000 ms
+  boot times             supreme-minimal ~55–60 ms · core/standard/supreme/lab ~830–980 ms
 Keyless scenario         9/9 gates PASS (real DSH session; router picks free route; PAID rejected)
 Security                 sentinel leaks = 0 · paid automatic fallback = DISABLED
-v1.2 audit gates         config-key hygiene PASS · pinned-ref scan PASS ·
-                         six-surface audit PASS · schema contract PASS (3 schemas)
+v1.2/v1.3 audit gates    config-key hygiene PASS · pinned-ref scan PASS ·
+                         six-surface audit PASS (incl. the pinned `workflow/agent-start` seam) ·
+                         schema contract PASS (3 schemas)
 Upstream integrity       commit unchanged · worktree clean · patches = 0
-Performance              router ≈ 0.02 ms / 1k · observability serialize ≈ 0.003 ms / 1k
+Performance              router ≈ 0.02–0.03 ms / 1k · observability serialize ≈ 0.001–0.005 ms / 1k
 VERDICT                  COMPLETE
 ```
 
@@ -148,12 +152,65 @@ is a lifecycle fixture — it is **never** cited as DSH proof.
 |---|---|---|
 | Secrets never leak through observability | Secret-sentinel scrub on allowlisted fields, fail-open write path | suite: `sentinelLeaks = 0` every run |
 | Tainted tool arguments can't dispatch | Unicode class scan (zero-width / bidi / BOM / tag) + `taintPolicy: DENY` via upstream `tools/pre-execute` | `V12_E2E_COMPLETE` functional probe |
-| Values never echoed in audit events | Taint events carry **class names only** | code + suite checks |
+| Denying a command actually stops it | Deny-circumvention guard: same-shape retry of a denied call refused (`deny_retry`) — signature carries names/types, never values | `V13_POLICY_E2E_COMPLETE` probes |
+| Hidden payloads can't ride in tool args | Encoding-blob scan (≥256-char base64/hex runs), class names + lengths only | `V13_POLICY_E2E_COMPLETE` probes |
+| Self-declared capability labels can't buy permission | `capabilityClassGate` ENFORCE/AUDIT; LAB allowlist is floor-bound; labeling only RESTRICTS | `V13_POLICY_E2E_COMPLETE` probes |
+| Inter-agent channels stay on the declared graph | `allowedContacts` directed edges; out-of-graph audited (`a2a_contact`), DENY blocks pre-fact | `V13_WORKFLOW_E2E_COMPLETE` probes |
+| Delegations can't quietly exceed their task | Overreach audit: risk ceiling + approval gate + path scope, value-free | `V13_WORKFLOW_E2E_COMPLETE` probes |
+| Benchmark scores can't sandbag the router | `evidenceBacked` flag (verifier-PASS rule) + fixed `unscoredEvidenceWeight` downweight | `V13_ROUTING_E2E_COMPLETE` probes |
+| Values never echoed in audit events | Taint/contact/overreach events carry **class names, ids and levels only** | code + suite checks |
 | Paid models never fire by accident | `UNKNOWN` cost ⇒ DENY; `allowPaid` refused outside LAB; no automatic fallback | keyless scenario gate 9/9 |
-| Destructive delegation is scoped | `blockedPaths` > `allowedPaths` glob enforcement; `DENY_ALL` secret policy | suite checks 11 (workflow) |
+| Destructive delegation is scoped | `blockedPaths` > `allowedPaths` glob enforcement; `DENY_ALL` secret policy | suite checks 15 (workflow) |
 | HIGH-risk work can't skip verification | `requireVerifierPassOnClose` evidence gate | `V12_E2E_COMPLETE` probe |
 | Supply chain stays pinned | External refs scanned; upstream commit + `irVersion` bound into run records | pinned-ref scan PASS |
 | Your own audit, offline | **Six-surface audit**: prompts · hooks · MCP · permissions · secrets · agent files | suite check PASS |
+
+---
+
+## 🧬 v1.3 ASTRA-hardening features
+
+Seven deterministic hardening features from the ASTRA-1 backlog
+([`research/gpt6-astra-2026-09.md`](./research/gpt6-astra-2026-09.md) §7).
+No ML, no new deps — every feature is engine-checked in the keyless suite and
+proven end-to-end by `bun run v13:verify` (real engines + real pinned-cordis
+adapters). The shared label contract `CapabilitySignal
+{ capabilityClass?, cotVisibility? }` is exported by `supreme-policy` and
+carried (never enforced) by the router.
+
+### supreme-policy — four features
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `cotVisibilityProfiles` | `{}` | routeId → expected CoT visibility. A route declared `none` **never denies** on `cot_missing` — ENFORCE downgrades to audit-only (empty-CoT models can't be coerced into producing a trace). Resolution: explicit signal > profile > `verbose`. |
+| `riskGatedCoT` | `false` | ENFORCE applies only to HIGH-risk tools (deterministic command/network/write name classifier); non-HIGH tools keep AUDIT. |
+| `denyCircumventionGuard` | `true` | A same-shape retry of an already-denied call is refused with reason code `deny_retry`. The signature encodes argument NAMES + TYPES only — values can never enter it. First calls unaffected; `resetDenyCircumvention(sessionId)` is the escape hatch. |
+| `enableEncodingScan` | `false` | Audit/deny ≥256-char base64/hex runs in tool arguments (`encoding_blob`; argument NAME + run LENGTH only). Extends the v1.2 taint surface: same event, same `taintPolicy`. |
+| `capabilityClassGate` | `'OFF'` | Gate requests carrying `capabilityClass`: `AUDIT` records, `ENFORCE` denies unsanctioned classes. Unlabeled requests always pass untouched. |
+| `sanctionedCapabilityClasses` / `labCapabilityClassAllowlist` | `[]` / `[]` | Sanction lists; the LAB allowlist is additive and binds ONLY on the LAB floor. No implicit `ROUTINE` exemption — a self-declared label can only RESTRICT, never grant. |
+
+### supreme-workflow-policy — two features
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `agentContactPolicy` / `allowedContacts` | `'LOG_ONLY'` / `[]` | A2A contact graph: directed `{ from, to }` edges of agent ids/roles (empty = inert). Out-of-graph spawn/message contacts are audited as `a2a_contact`; under `'DENY'` the pre-fact `tools/pre-execute` waterfall refuses with `a2a_contact_denied`. Emit-mode seams are DETECT-only. |
+| `maxRiskLevel` / `approvalRequiredFor` | `'HIGH'` / `[]` | Overreach audit: delegations above the risk ceiling, listed task classes without an approval flag, or paths outside the v1.2 scope are audited as `overreach_suspected` (labels, levels, flags, config globs — never content). |
+
+### supreme-router + supreme-benchmark — anti-sandbagging
+
+| Config key | Plugin | Default | Meaning |
+|---|---|---|---|
+| `requireEvidenceForScores` | benchmark | `false` | Score claims without verifier-PASS evidence are flagged `evidenceBacked: false` on the score + run (flag only — scores never rewritten; re-evaluated when verification lands late). |
+| `unscoredEvidenceWeight` | router | `1` | FIXED multiplicative downweight for unevidenced benchmark claims (e.g. `0.5` halves such scores); ids + factors recorded on the decision + `unscored_evidence` events (ids only). `1` = off, back-compat. |
+| — | router | — | Carries `capabilityClass` / `cotVisibility` labels from candidates onto the selected `RouteDecision` (carrier, not enforcer). |
+
+### Composition fragments (v1.3 posture)
+
+| Fragment | v1.3 keys |
+|---|---|
+| `core` | `denyCircumventionGuard: true` pinned (the one default-ON); everything else inherits OFF defaults |
+| `standard` | `enableEncodingScan: true` + `capabilityClassGate: AUDIT` — audit-only, cannot block |
+| `supreme` | same audit-only policy posture + `requireEvidenceForScores: true` + workflow keys pinned at behavior-preserving defaults |
+| `lab` | enforcing demo: `capabilityClassGate: ENFORCE` + `labCapabilityClassAllowlist`, `cotVisibilityProfiles` + `riskGatedCoT`, declared contact graph + `maxRiskLevel: MEDIUM`, `unscoredEvidenceWeight: 0.5` |
 
 ---
 
@@ -238,6 +295,8 @@ dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme
 bun run bundle:verify
 # prove the v1.2 config surface end-to-end
 bun run v12:verify
+# prove the v1.3 ASTRA-hardening features end-to-end (all three verifiers)
+bun run v13:verify
 ```
 
 The bundle mounts the seven plugins with **safe production defaults** (PAID /
@@ -463,6 +522,9 @@ dsh-supreme/                      (repo root as published)
 │   ├── composition-verify.mjs # E2E: 4 composition fragments (COMPOSITIONS_E2E_COMPLETE)
 │   ├── v3-config-verify.mjs   # E2E: silent-strip proof (V3_CONFIG_REVIEW_EVIDENCE)
 │   ├── v12-config-verify.mjs  # E2E: v1.2 config surface + probes (V12_E2E_COMPLETE)
+│   ├── v13-policy-verify.mjs  # E2E: v1.3 policy features, 85 probes (V13_POLICY_E2E_COMPLETE)
+│   ├── v13-workflow-verify.mjs# E2E: v1.3 A2A + overreach, 82 probes (V13_WORKFLOW_E2E_COMPLETE)
+│   ├── v13-routing-verify.mjs # E2E: v1.3 labels + anti-sandbagging, 17 probes (V13_ROUTING_E2E_COMPLETE)
 │   └── build-batched.sh       # memory-batched official upstream build
 ├── dist/plugins/<name>/index.mjs    # bun-built ESM bundles loaded by the real Loader
 ├── data/
@@ -510,7 +572,7 @@ Cordis plugin layer that consumes official services and event seams.
 
 **Q: Is any of this AI-powered?**
 None. Every gate is deterministic code — counting, glob matching, string
-comparison, zod validation. That's why the router decides in ~0.02 ms and why
+comparison, zod validation. That's why the router decides in ~0.02–0.03 ms and why
 results are reproducible on your machine, today.
 
 **Q: Why does `UNKNOWN` cost deny the model?**

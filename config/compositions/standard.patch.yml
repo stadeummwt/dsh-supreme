@@ -19,10 +19,25 @@
 #
 # Paths are RELATIVE to the dsh process working directory. Override any row
 # from your own patch layer — user layers always win.
+#
+# v1.3 ASTRA-hardening posture (production-conservative): both new policy
+# layers run in AUDIT/scan-only mode — nothing here can block a call.
+#   - enableEncodingScan: true → long base64/hex runs in tool arguments are
+#     audited as `encoding_blob` (class name + argument name + run length;
+#     values are never echoed).
+#   - capabilityClassGate: AUDIT → requests carrying a `capabilityClass` label
+#     outside sanctionedCapabilityClasses (empty here) are audited, not denied.
+# The remaining v1.3 keys (cotVisibilityProfiles, riskGatedCoT,
+# denyCircumventionGuard) keep their bundle defaults; the workflow/router/
+# benchmark v1.3 keys live in the supreme/lab fragments where those plugins
+# are active.
 
 - id: supreme-policy
   config:
     executionClass: STANDARD
+    # v1.3: audit-only ASTRA posture (see block above).
+    enableEncodingScan: true
+    capabilityClassGate: AUDIT
 
 - id: supreme-observability
   config:

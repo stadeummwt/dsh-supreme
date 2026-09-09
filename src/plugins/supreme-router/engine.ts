@@ -7,6 +7,16 @@
  * and NEVER relaxes gates.
  */
 
+// v1.3 CapabilitySignal contract — single source of truth lives in
+// supreme-policy/engine.ts (V13-A). TYPE-ONLY import: erased at runtime, so
+// the router gains no runtime coupling to policy. Field names are contractual
+// and must stay byte-identical: `capabilityClass?: string` and
+// `cotVisibility?: 'verbose' | 'terse' | 'none'` (the router is the label
+// CARRIER on decision records; enforcement lives in policy).
+import type { CapabilitySignal } from '../supreme-policy/engine';
+
+export type { CapabilitySignal };
+
 export const HEALTH_STATES = [
   'HEALTHY',
   'DEGRADED',
@@ -56,6 +66,13 @@ export const DEFAULT_WEIGHTS: Readonly<ScoreWeights> = Object.freeze({
   diversity: 0.05,
 });
 
+/**
+ * v1.3 CapabilitySignal (ASTRA-hardening P3) — the shared interface is
+ * imported (type-only) from supreme-policy/engine.ts and re-exported here for
+ * router-side consumers. The router attaches the SELECTED candidate's labels
+ * to the decision record; it never enforces them.
+ */
+
 export interface RouterCandidate {
   key: string;
   provider: string;
@@ -70,6 +87,10 @@ export interface RouterCandidate {
   providerAvailable: boolean;
   /** Model resolves through the live llm runtime. */
   modelValid: boolean;
+  /** v1.3: config-owned capability label carried onto the decision record (no enforcement here). */
+  capabilityClass?: string;
+  /** v1.3: config-owned CoT-visibility label carried onto the decision record (no enforcement here). */
+  cotVisibility?: 'verbose' | 'terse' | 'none';
 }
 
 export interface RouteInput {
@@ -81,6 +102,13 @@ export interface RouteInput {
 export interface CandidateModelPerf {
   avgQuality: number | null;
   samples: number;
+  /**
+   * v1.3 anti-sandbagging: false ONLY when the candidate's benchmark history
+   * carries quality-score claims and NONE/NOT ALL of them are backed by
+   * verifier-PASS evidence (computed by the caller from benchmark aggregates).
+   * undefined = no score claim exists → nothing to distrust.
+   */
+  evidenceBacked?: boolean;
 }
 
 export interface GateResult {
@@ -109,6 +137,15 @@ export interface RouteDecision {
   weightsUsed: ScoreWeights;
   /** v1.2: RM0-first rule narrowed the scoring set (evidence preserved for all). */
   costFirstApplied: boolean;
+  /** v1.3 CapabilitySignal: labels of the SELECTED candidate (policy enforces, router carries). */
+  capabilityClass?: string;
+  cotVisibility?: 'verbose' | 'terse' | 'none';
+  /**
+   * v1.3 anti-sandbagging: candidates whose benchmark scores lacked
+   * verifier-PASS evidence and received the fixed downweight factor.
+   * ids + factors only — never score content.
+   */
+  unscoredEvidence?: Array<{ candidate: string; factor: number }>;
 }
 
 export interface CircuitConfig {
@@ -214,6 +251,13 @@ export interface RouterConfig {
   circuit: CircuitConfig;
   /** v1.2: RM0-first — among eligible candidates, score only the cheapest cost class. */
   costFirst: boolean;
+  /**
+   * v1.3 anti-sandbagging: FIXED multiplicative downweight applied to the
+   * routing score of candidates whose benchmark record is not-evidence-backed
+   * (claimed scores without verifier-PASS evidence). Deterministic, no ML.
+   * 1.0 = disabled (default, back-compat); e.g. 0.5 halves such scores.
+   */
+  unscoredEvidenceWeight: number;
 }
 
 /** v1.2: cheapest-first order (rank 0 = truly free). Policy still gates hard before this. */
@@ -282,6 +326,7 @@ export const DEFAULT_ROUTER_CONFIG: Readonly<RouterConfig> = Object.freeze({
   minQuotaHeadroom: 0.05,
   circuit: { ...DEFAULT_CIRCUIT },
   costFirst: true,
+  unscoredEvidenceWeight: 1,
 });
 
 const HEALTH_SCORE: Partial<Record<HealthState, number>> = {
@@ -395,6 +440,7 @@ export function selectRoute(deps: SelectRouteDeps): RouteDecision {
     candidate: RouterCandidate;
     score: number;
     components: Record<ScoreComponent, number>;
+    downweighted: boolean;
   }
   const scored: Scored[] = scoringSet.map((candidate) => {
     const perfEntry = perf.get(candidate.key);
@@ -422,14 +468,34 @@ export function selectRoute(deps: SelectRouteDeps): RouteDecision {
       capabilityFit,
       diversity,
     };
-    const score = SCORE_COMPONENTS.reduce((acc, k) => acc + weights[k] * components[k], 0);
-    return { candidate, score, components };
+    let score = SCORE_COMPONENTS.reduce((acc, k) => acc + weights[k] * components[k], 0);
+    // v1.3 anti-sandbagging: a fixed, deterministic downweight — never ML, never
+    // adaptive — for candidates whose benchmark scores lack verifier-PASS
+    // evidence ("evidence > self-confidence"). weight === 1 is the off switch.
+    let downweighted = false;
+    if (config.unscoredEvidenceWeight !== 1 && perfEntry?.evidenceBacked === false) {
+      score = score * config.unscoredEvidenceWeight;
+      downweighted = true;
+    }
+    return { candidate, score, components, downweighted };
   });
 
   scored.sort((a, b) => b.score - a.score || a.candidate.key.localeCompare(b.candidate.key));
   const best = scored[0];
   if (!hasExplorationEvidence(perf, config, eligible)) reasonCodes.push('EXPLORATION_NO_HISTORY');
   reasonCodes.push('OK');
+
+  // v1.3: ids + applied factors of downweighted candidates (audit consumes these).
+  const unscoredEvidence = scored
+    .filter((s) => s.downweighted)
+    .map((s) => ({ candidate: s.candidate.key, factor: config.unscoredEvidenceWeight }));
+  if (unscoredEvidence.length > 0) reasonCodes.push('UNSCORED_EVIDENCE_DOWNWEIGHT');
+
+  // v1.3 CapabilitySignal: attach ONLY the labels the selected candidate
+  // actually carries (keys stay absent otherwise — back-compat shape).
+  const signal: CapabilitySignal = {};
+  if (best.candidate.capabilityClass !== undefined) signal.capabilityClass = best.candidate.capabilityClass;
+  if (best.candidate.cotVisibility !== undefined) signal.cotVisibility = best.candidate.cotVisibility;
 
   return {
     decisionId,
@@ -447,6 +513,8 @@ export function selectRoute(deps: SelectRouteDeps): RouteDecision {
     })),
     weightsUsed: weights,
     costFirstApplied,
+    ...signal,
+    ...(unscoredEvidence.length > 0 ? { unscoredEvidence } : {}),
   };
 }
 

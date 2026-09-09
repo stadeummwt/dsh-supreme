@@ -76,6 +76,12 @@ export interface BenchmarkRunData {
   qualityScore?: number;
   failureClass?: FailureClass;
   verification?: ValidatorResult;
+  /**
+   * v1.3 anti-sandbagging: present ONLY when requireEvidenceForScores is
+   * enabled — true iff the quality claim on this run is backed by
+   * verifier-PASS evidence (evidence > self-confidence).
+   */
+  evidenceBacked?: boolean;
 }
 
 export interface BenchmarkRun extends BenchmarkRunData {
@@ -90,6 +96,8 @@ export interface BenchmarkScore {
   qualityScore: number;
   validatorId?: string;
   scoredAt: number;
+  /** v1.3 anti-sandbagging: present ONLY when requireEvidenceForScores is enabled. */
+  evidenceBacked?: boolean;
 }
 
 export type BenchmarkRecord =
@@ -113,6 +121,10 @@ export interface ModelPerformance {
   avgQuality: number | null;
   avgLatencyMs: number | null;
   failureBreakdown: Partial<Record<FailureClass, number>>;
+  /** v1.3 anti-sandbagging: samples carrying a qualityScore claim. */
+  scoredSamples: number;
+  /** v1.3 anti-sandbagging: of those, claims backed by verifier-PASS evidence. */
+  evidenceBackedScores: number;
 }
 
 export interface BenchmarkStats {
@@ -127,6 +139,15 @@ export class BenchmarkValidationError extends Error {
     super(`invalid benchmark record: ${issues.join('; ')}`);
     this.name = 'BenchmarkValidationError';
   }
+}
+
+/**
+ * v1.3 anti-sandbagging — deterministic evidence rule: a score claim counts as
+ * evidence-backed ONLY when the scored run carries a verifier-PASS result.
+ * Never ML, never heuristic: evidence > self-confidence.
+ */
+export function isVerifierPassEvidence(verification: ValidatorResult | undefined): boolean {
+  return verification?.status === 'PASS';
 }
 
 function assertCondition(ok: boolean, issues: string[], message: string): void {
@@ -178,6 +199,9 @@ export function validateBenchmarkRecord(raw: unknown): BenchmarkRecord {
         'failureClass must be a known FailureClass',
       );
     }
+    if (rec.evidenceBacked !== undefined) {
+      assertCondition(typeof rec.evidenceBacked === 'boolean', issues, 'evidenceBacked must be a boolean');
+    }
   } else if (kind === 'score') {
     assertCondition(typeof rec.runId === 'string', issues, 'runId required');
     assertCondition(
@@ -186,6 +210,9 @@ export function validateBenchmarkRecord(raw: unknown): BenchmarkRecord {
       'qualityScore must be within [0,1]',
     );
     assertCondition(typeof rec.scoredAt === 'number', issues, 'scoredAt required');
+    if (rec.evidenceBacked !== undefined) {
+      assertCondition(typeof rec.evidenceBacked === 'boolean', issues, 'evidenceBacked must be a boolean');
+    }
   } else {
     issues.push('kind must be task|run|score');
   }
@@ -220,6 +247,9 @@ export function aggregateRuns(runs: BenchmarkRun[]): ModelPerformance[] {
         failureBreakdown[run.failureClass] = (failureBreakdown[run.failureClass] ?? 0) + 1;
       }
     }
+    // v1.3 anti-sandbagging counts: claims vs verifier-PASS-backed claims.
+    const scoredRuns = bucket.filter((r) => typeof r.qualityScore === 'number');
+    const evidenceBackedScores = scoredRuns.filter((r) => r.evidenceBacked === true).length;
     out.push({
       provider,
       model,
@@ -229,6 +259,8 @@ export function aggregateRuns(runs: BenchmarkRun[]): ModelPerformance[] {
       avgLatencyMs:
         latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
       failureBreakdown,
+      scoredSamples: scoredRuns.length,
+      evidenceBackedScores,
     });
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
@@ -241,6 +273,16 @@ export interface BenchmarkFs {
   mkdir(dir: string): Promise<void>;
 }
 
+/** v1.3 anti-sandbagging store options (all optional → v1.2 constructions keep working). */
+export interface BenchmarkStoreOptions {
+  /**
+   * When true, every quality-score claim without verifier-PASS evidence is
+   * flagged `evidenceBacked: false` on the score record and its run.
+   * Default false — behavior-preserving.
+   */
+  requireEvidenceForScores?: boolean;
+}
+
 export class BenchmarkStore {
   private tasks: BenchmarkTask[] = [];
   private runs: BenchmarkRun[] = [];
@@ -248,11 +290,15 @@ export class BenchmarkStore {
   private corruptLines = 0;
   private queue: Promise<void> = Promise.resolve();
   private loaded = false;
+  private readonly requireEvidenceForScores: boolean;
 
   constructor(
     private readonly filePath: string,
     private readonly fsImpl: BenchmarkFs,
-  ) {}
+    options: BenchmarkStoreOptions = {},
+  ) {
+    this.requireEvidenceForScores = options.requireEvidenceForScores === true;
+  }
 
   /** Load history once; corrupt lines are skipped and counted, never fatal. */
   async init(): Promise<BenchmarkStats> {
@@ -367,6 +413,12 @@ export class BenchmarkStore {
     const run = this.runs.find((r) => r.runId === runId);
     if (!run) return undefined;
     Object.assign(run, outcome, { finishedAt: outcome.finishedAt ?? Date.now() });
+    // v1.3 anti-sandbagging: last-write-wins replay semantics — when the final
+    // verification lands, re-evaluate the evidence flag of an already-claimed
+    // score (deterministic, toggle-gated).
+    if (this.requireEvidenceForScores && typeof run.qualityScore === 'number') {
+      run.evidenceBacked = isVerifierPassEvidence(run.verification);
+    }
     await this.persist(run);
     return run;
   }
@@ -375,6 +427,12 @@ export class BenchmarkStore {
     if (input.qualityScore < 0 || input.qualityScore > 1) {
       throw new BenchmarkValidationError(['qualityScore must be within [0,1]']);
     }
+    const run = this.runs.find((r) => r.runId === input.runId);
+    // v1.3 anti-sandbagging: claimed scores need verifier-PASS evidence.
+    // Flag present ONLY when the toggle is on (default config writes no key).
+    const evidenceBacked = this.requireEvidenceForScores
+      ? isVerifierPassEvidence(run?.verification)
+      : undefined;
     const score: BenchmarkScore = {
       schemaVersion: 1,
       kind: 'score',
@@ -382,10 +440,13 @@ export class BenchmarkStore {
       qualityScore: input.qualityScore,
       validatorId: input.validatorId,
       scoredAt: input.scoredAt ?? Date.now(),
+      ...(evidenceBacked !== undefined ? { evidenceBacked } : {}),
     };
     await this.persist(score);
-    const run = this.runs.find((r) => r.runId === input.runId);
-    if (run) run.qualityScore = score.qualityScore;
+    if (run) {
+      run.qualityScore = score.qualityScore;
+      if (evidenceBacked !== undefined) run.evidenceBacked = evidenceBacked;
+    }
     return score;
   }
 
