@@ -43,64 +43,117 @@ import {
 } from '../plugins/supreme-observability/engine';
 import {
   aggregateRuns,
+  aggregateTaskLatency,
+  assertNoRepeatedSideEffects,
   BenchmarkStore,
+  checkArtifactHashes,
+  classSampleRows,
   isVerifierPassEvidence,
+  planResumeFromRecords,
+  resumeActions,
   validateBenchmarkRecord,
+  validateCheckpointRecord,
   BenchmarkValidationError,
+  ResumeSafetyError,
   type BenchmarkFs,
+  type BenchmarkRun,
+  type CheckpointRecord,
 } from '../plugins/supreme-benchmark/engine';
 import {
+  AttemptLedger,
   CircuitBreaker,
   baseEffortFor,
+  buildRouteCostGate,
+  classifyFailure,
+  ClassPerformanceTracker,
   costClassRank,
+  DEFAULT_BOUNDS,
   DEFAULT_EFFORT_PACING,
+  DEFAULT_FAST_PATH,
   DEFAULT_ROUTER_CONFIG,
+  DEFAULT_SIMPLE_TASK_CLASSES,
   escalateEffort,
+  freeClaimEvidence,
+  freeClaimIsCurrent,
+  isSimpleTask,
+  normalizeTaskClass,
+  OutcomeCircuitBreaker,
+  planCrossProviderFallbacks,
+  resolveRouteCostClass,
+  routeCostDeniedMessage,
   selectRoute,
   weightsAreNormalized,
+  wilsonLowerBound,
+  withinWallClock,
+  COST_POLICY_UNAVAILABLE_REASON,
+  WILSON_Z,
+  type FallbackPoolEntry,
   type RouterCandidate,
 } from '../plugins/supreme-router/engine';
 import {
+  evaluateEvidenceForClose,
+  isEvidenceCurrent,
   pathIsAllowed,
+  resolveRealConfinement,
   runValidator,
   sanitizeEvidence,
+  validateJsonSchema,
   validateJsonSchemaSubset,
+  EVIDENCE_SCHEMA_VERSION,
   type VerifierRuntime,
 } from '../plugins/supreme-verifier/engine';
 import {
+  clampSelectionStoreCap,
+  DEFAULT_SELECTION_STORE_CAP,
   estimateTokens,
+  identityKey,
+  identityOf,
   isSecretBearing,
   ledgerNotesToItems,
   ledgerRelevanceScore,
+  MIN_SELECTION_STORE_CAP,
   needsMemory,
+  normalizeIdentityText,
   NoteLedger,
   NOOP_LONG_TERM_PROVIDER,
   selectLedgerNotes,
   selectMemory,
+  SelectionStore,
   validateLedgerNote,
   LedgerValidationError,
   type LedgerFs,
   type LedgerNote,
   type MemoryItem,
+  type MemorySelection,
 } from '../plugins/supreme-memory-policy/engine';
 import {
   A2A_CONTACT_DENIED_REASON,
   A2A_CONTACT_EVENT,
+  A2A_RECIPIENT_UNRESOLVABLE_REASON,
   AGENT_CONTACT_POLICIES,
+  buildCommsToolRegistry,
   buildDelegationScope,
   canCloseTask,
   classifyDelegationToolRisk,
+  commsChannelOf,
+  DEFAULT_COMMS_TOOL_REGISTRY,
   decideWorkflow,
   evaluateAgentContact,
   evaluateOverreach,
   evaluatePathScope,
+  inferCommsChannel,
+  isCommunicationTool,
+  normalizeToolName,
   OVERREACH_EVENT,
   pathMatchesGlob,
   RISK_LEVELS,
+  unresolvableRecipientDecision,
+  validateCloseEvidenceRecord,
   validateWorkflowLimits,
   WORKFLOW_LIMIT_DEFAULTS,
   WorkflowConfigError,
 } from '../plugins/supreme-workflow-policy/engine';
+import * as nodePath from 'node:path';
 
 const LAB_CONFIG: SupremePolicyConfig = {
   ...PRODUCTION_DEFAULTS,
@@ -344,6 +397,19 @@ export function policyChecks(): Check[] {
       expectThrows(() => validatePolicyConfig(prodConfig({ labCapabilityClassAllowlist: [7] as never })), 'non-string allowlist rejected');
       expectTrue(PolicyConfigError !== undefined, 'error type present');
     }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-cost-enforce.mjs) ----
+    check('policy.route-decision-gate-contract', 'v1.3.1 FIX-A: policy decision contract consumed by the pre-dispatch cost gate', () => {
+      // The router's pre-dispatch gate consumes exactly this owner shape:
+      // { allowed, reasonCodes } with value-free label reasons (FIX-A).
+      const paid = evaluateRoutePolicy(PRODUCTION_DEFAULTS, { costClass: 'PAID', risk: 'LOW' });
+      expectEqual(paid.allowed, false, 'paid denied by owner');
+      expectTrue(paid.reasonCodes.includes('COST_PAID_DENIED'), 'deny reason is a value-free label');
+      const free = evaluateRoutePolicy(PRODUCTION_DEFAULTS, { costClass: 'FREE_CONFIRMED', risk: 'LOW' });
+      expectEqual(free.allowed, true, 'free allowed by owner');
+      expectTrue(free.reasonCodes.includes('COST_FREE_CONFIRMED') && free.reasonCodes.includes('OK'), 'allow reasons recorded');
+      const unknown = evaluateRoutePolicy(PRODUCTION_DEFAULTS, { costClass: 'UNKNOWN', risk: 'LOW' });
+      expectTrue(!unknown.allowed && unknown.reasonCodes.includes('COST_UNKNOWN_DENIED'), 'unknown denied with pinned label');
+    }),
   ];
 }
 
@@ -532,6 +598,63 @@ export function benchmarkChecks(): Check[] {
       expectEqual(agg[0].scoredSamples, 2, 'score claims counted');
       expectEqual(agg[0].evidenceBackedScores, 1, 'evidence-backed subset counted');
     }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-outcome-routing.mjs) ----
+    check('benchmark.checkpoint-hash-binding', 'v1.3.1 IMP-R: checkpoint artifact hashes bind records to real artifact bytes', () => {
+      expectEqual(checkArtifactHashes([{ ref: 'f', hash: 'h1' }], { f: 'h1' }), 'verified', 'matching hashes verified');
+      expectEqual(checkArtifactHashes([{ ref: 'f', hash: 'h1' }], { f: 'h2' }), 'mismatch', 'changed bytes ⇒ mismatch');
+      expectEqual(checkArtifactHashes([{ ref: 'f', hash: 'h1' }], {}), 'mismatch', 'missing artifact ⇒ mismatch');
+      expectEqual(checkArtifactHashes([{ ref: 'f', hash: 'h1' }], undefined), 'unverified', 'no current state ⇒ unverified (honest)');
+      // Validation: hash pairs bounded + well-formed; flag boolean; status enum.
+      const record = {
+        schemaVersion: 1 as const, kind: 'checkpoint' as const, taskId: 't', stepIndex: 0, artifactRefs: ['f'],
+        artifactHashes: [{ ref: 'f', hash: 'sha256' }], sideEffectsRegistered: true, status: 'completed' as const, updatedAt: 1,
+      };
+      expectEqual(validateCheckpointRecord(record).sideEffectsRegistered, true, 'valid record roundtrips');
+      expectThrows(() => validateCheckpointRecord({ ...record, artifactHashes: [{ ref: 'f', hash: 'has space' }] }), 'bad hash token rejected');
+      expectThrows(() => validateCheckpointRecord({ ...record, sideEffectsRegistered: 'yes' as never }), 'non-boolean flag rejected');
+      expectThrows(() => validateCheckpointRecord({ ...record, status: 'rewound' as never }), 'bad status rejected');
+    }),
+    check('benchmark.resume-never-repeats-side-effects', 'v1.3.1 IMP-R: resume re-plans from TRUE state — completed steps never auto-redo, stale hashes surface without execution', () => {
+      const records: CheckpointRecord[] = [
+        { schemaVersion: 1, kind: 'checkpoint', taskId: 't', stepIndex: 0, artifactRefs: ['f0'], artifactHashes: [{ ref: 'f0', hash: 'h0' }], status: 'completed', updatedAt: 1 },
+        { schemaVersion: 1, kind: 'checkpoint', taskId: 't', stepIndex: 1, artifactRefs: ['f1'], status: 'interrupted', updatedAt: 2 },
+      ];
+      // Verified state: step0 done, step1 redone.
+      const plan = planResumeFromRecords('t', records, { f0: 'h0' });
+      expectEqual(plan.steps[0].redo, false, 'completed+verified never redo');
+      expectEqual(plan.steps[0].hashCheck, 'verified', 'hash check verified');
+      expectEqual(plan.steps[1].redo, true, 'interrupted step redone');
+      expectEqual(resumeActions(plan).map((s) => s.stepIndex).join(','), '1', 'only non-completed steps auto-run');
+      // Stale side effect: step0's bytes changed — surfaced, never executed.
+      const stale = planResumeFromRecords('t', records, { f0: 'DIFFERENT' });
+      expectEqual(stale.steps[0].hashCheck, 'mismatch', 'stale hash detected');
+      expectEqual(stale.steps[0].redo, true, 'stale step flagged for attention');
+      expectEqual(resumeActions(stale).length, 1, 'stale completed step NOT auto-runnable');
+      expectThrows(() => assertNoRepeatedSideEffects(stale, [{ stepIndex: 0 }]), 'safety assertion refuses completed-step actions');
+      expectTrue(ResumeSafetyError !== undefined, 'error type present');
+    }),
+    check('benchmark.class-samples-latency', 'v1.3.1 IMP-R: class-sample rows + task latency aggregate from real run records (durations only)', () => {
+      const run = (over: Partial<BenchmarkRun>): BenchmarkRun => ({
+        schemaVersion: 1, kind: 'run', runId: 'r', taskId: 't', taskCategory: 'unit', provider: 'p', model: 'm', profile: 'x', startedAt: 0, ...over,
+      });
+      const rows = classSampleRows([
+        run({ runId: 'r1', provider: 'a', model: 'm', success: true, finishedAt: 10 }),
+        run({ runId: 'r2', provider: 'b', model: 'm', success: false, finishedAt: 20 }),
+        run({ runId: 'r3', provider: 'c', model: 'm', success: true }), // unfinished ⇒ excluded
+      ]);
+      expectEqual(rows.length, 2, 'only finished runs sampled');
+      expectEqual(rows[0].provider, 'b', 'most recent first');
+      expectEqual(rows[1].success, true, 'outcomes carried');
+      const latency = aggregateTaskLatency([
+        run({ runId: 'l1', taskCategory: 'unit', latencyMs: 100, finishedAt: 10 }),
+        run({ runId: 'l2', taskCategory: 'unit', latencyMs: 300, finishedAt: 20 }),
+        run({ runId: 'l3', taskCategory: 'unit', startedAt: 0, finishedAt: 50 }), // duration from timestamps
+      ]);
+      expectEqual(latency.length, 1, 'one category group');
+      expectEqual(latency[0].samples, 3, 'all finished runs counted');
+      expectEqual(latency[0].maxLatencyMs, 300, 'max duration');
+      expectEqual(latency[0].medianLatencyMs, 100, 'median duration (sorted 50/100/300)');
+    }),
   ];
 }
 
@@ -704,6 +827,129 @@ export function routerChecks(): Check[] {
       expectEqual(explored.blocked, null, 'not blocked');
       expectTrue(!('unscoredEvidence' in explored), 'no claims → no downweight');
     }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-cost-enforce.mjs) ----
+    check('router.cost-gate-predispatch', 'v1.3.1 FIX-A: pre-dispatch cost gate — UNKNOWN denied even over a permissive policy, fail-closed without one', () => {
+      // The gate composes the policy decision; UNKNOWN stays denied even when a
+      // misconfigured policy service claimed otherwise (belt-and-braces rule).
+      const permissive = { allowed: true, reasonCodes: ['OK'] };
+      const unknown = buildRouteCostGate({ provider: 'p', model: 'm', costClass: 'UNKNOWN', policyDecision: permissive, now: 1000 });
+      expectEqual(unknown.allowed, false, 'UNKNOWN denied pre-dispatch');
+      expectTrue(unknown.reasonCodes.includes('COST_UNKNOWN_DENIED'), 'pinned unknown reason');
+      // Free route passes and carries free-claim evidence metadata (never secrets).
+      const free = buildRouteCostGate({ provider: 'p', model: 'm', costClass: 'FREE_CONFIRMED', policyDecision: permissive, now: 1000 });
+      expectEqual(free.allowed, true, 'free passes');
+      expectEqual(free.freeClaim?.source, 'config', 'free claim evidence present');
+      expectEqual(free.freeClaim?.status, 'active', 'claim starts active');
+      // Missing/unusable policy service ⇒ fail-closed deny, never a silent pass.
+      const failClosed = buildRouteCostGate({ provider: 'p', model: 'm', costClass: 'FREE_CONFIRMED', policyDecision: null, now: 1000 });
+      expectEqual(failClosed.allowed, false, 'no policy ⇒ no permission');
+      expectEqual(failClosed.reasonCodes[0], COST_POLICY_UNAVAILABLE_REASON, 'fail-closed reason');
+      // The llm/stream backstop (seam registration proven by surface-audit; the
+      // seam behavior end-to-end by real/v131-cost-enforce.mjs) refuses with a
+      // VALUE-FREE message: reason labels + route key only.
+      const msg = routeCostDeniedMessage(unknown);
+      expectTrue(msg.includes('COST_UNKNOWN_DENIED') && msg.includes('p::m'), 'message carries reason + route key');
+    }),
+    check('router.cost-gate-free-claim-currency', 'v1.3.1 FIX-A: free-claim evidence is explicit, expiring, and UNKNOWN-by-default', () => {
+      expectEqual(resolveRouteCostClass(new Map([['p::m', 'FREE_CONFIRMED']]), 'p', 'm'), 'FREE_CONFIRMED', 'allowlist hit');
+      expectEqual(resolveRouteCostClass(new Map(), 'p', 'm'), 'UNKNOWN', 'unlisted route resolves UNKNOWN');
+      const claim = freeClaimEvidence('config', 1000, 5000);
+      expectEqual(claim.expiresAt, 6000, 'ttl honored');
+      expectEqual(freeClaimIsCurrent(claim, 5999), true, 'current before expiry');
+      expectEqual(freeClaimIsCurrent(claim, 6000), false, 'expired at boundary');
+      expectEqual(freeClaimIsCurrent(freeClaimEvidence('catalog', 0), 1e15), true, 'null expiry never expires');
+      expectEqual(freeClaimIsCurrent({ source: 'config', checkedAt: 0, status: 'expired', expiresAt: null }, 0), false, 'expired status never current');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-outcome-routing.mjs) ----
+    check('router.class-aware-wilson', 'v1.3.1 IMP-R: Wilson lower-bound shrinkage — a lucky 1/1 can never outrank a stable 50/52', () => {
+      const lucky = wilsonLowerBound(1, 1, WILSON_Z);
+      const stable = wilsonLowerBound(50 / 52, 52, WILSON_Z);
+      expectTrue(lucky > 0 && lucky < 0.25, `1/1 LB tiny (got ${lucky.toFixed(3)})`);
+      expectTrue(stable > 0.8, `50/52 LB high (got ${stable.toFixed(3)})`);
+      expectTrue(lucky < stable, 'uncertainty shrinkage holds');
+      expectEqual(wilsonLowerBound(0.9, 0), 0.5, 'no samples ⇒ neutral 0.5');
+      // Class tracker: per-(candidate, class) scores over real outcome samples.
+      const tracker = new ClassPerformanceTracker({ halfLifeMs: 1000 });
+      tracker.observe('a::m', 'class_a', true, 0); // one lucky success
+      for (let i = 0; i < 52; i++) tracker.observe('b::m', 'class_a', i < 50, 0); // stable 50/52
+      const now = 100; // well within one half-life → weights ≈ 1
+      expectTrue(tracker.score('a::m', 'class_a', now).score < tracker.score('b::m', 'class_a', now).score, 'stable beats lucky per class');
+      // Stale evidence decays through the freshness weight (fixed half-life).
+      tracker.observe('c::m', 'class_a', true, 0);
+      expectTrue(tracker.score('c::m', 'class_a', 100).score > tracker.score('c::m', 'class_a', 8000).score, 'stale perfect record decays');
+      // History from OTHER classes never leaks into this class score.
+      expectEqual(tracker.score('a::m', 'class_b', now).score, 0.5, 'unobserved class neutral');
+    }),
+    check('router.outcome-circuit', 'v1.3.1 IMP-R: outcome circuit opens after N consecutive failures; single half-open probe; classifier pinned', () => {
+      const breaker = new OutcomeCircuitBreaker({ consecutiveFailures: 3, cooldownMs: 1000 });
+      expectEqual(breaker.recordFailure('p::m', 1000, 'rate_limit').phase, 'closed', '1 failure stays closed');
+      breaker.recordFailure('p::m', 1100, 'rate_limit');
+      expectEqual(breaker.recordFailure('p::m', 1200, 'rate_limit').phase, 'open', '3 consecutive ⇒ open');
+      expectEqual(breaker.stateOf('p::m', 2100).phase, 'open', 'still inside cooldown');
+      expectEqual(breaker.stateOf('p::m', 2200).phase, 'half_open', 'cooldown elapsed ⇒ half-open');
+      expectEqual(breaker.acquireProbe('p::m', 2200), true, 'single probe granted');
+      expectEqual(breaker.acquireProbe('p::m', 2201), false, 'second probe refused');
+      expectEqual(breaker.recordSuccess('p::m', 2200).phase, 'closed', 'probe success closes');
+      expectEqual(breaker.acquireProbe('p::m', 2300), false, 'closed ⇒ no probe');
+      // Deterministic failure classification over the pinned upstream codes.
+      expectEqual(classifyFailure({ code: 'HTTP_429' }), 'rate_limit', '429 rate_limit');
+      expectEqual(classifyFailure({ code: 'QUOTA' }), 'rate_limit', 'quota rate_limit');
+      expectEqual(classifyFailure({ code: 'LLM_STREAM_IDLE_TIMEOUT' }), 'timeout', '*_TIMEOUT ⇒ timeout');
+      expectEqual(classifyFailure({ code: 'ABORTED' }), 'other', 'ABORTED is not a timeout');
+      expectEqual(classifyFailure({ code: 'MISSING_CREDENTIAL' }), 'credential', 'credential class');
+      expectEqual(classifyFailure({ code: 'VERIFICATION' }), 'verifier', 'verifier class');
+      expectEqual(classifyFailure(null), 'other', 'missing failure ⇒ other');
+    }),
+    check('router.attempt-ledger-bounded', 'v1.3.1 IMP-R: attempt ledger refuses beyond maxRetries; wall-clock budget deterministic', () => {
+      const ledger = new AttemptLedger({ maxRetries: 3 });
+      expectEqual(ledger.registerAttempt('t1').allowed, true, 'attempt 1 allowed');
+      expectEqual(ledger.registerAttempt('t1').allowed, true, 'attempt 2 allowed');
+      expectEqual(ledger.registerAttempt('t1').allowed, true, 'attempt 3 allowed');
+      const fourth = ledger.registerAttempt('t1');
+      expectEqual(fourth.allowed, false, 'attempt 4 refused (retry-storm bound)');
+      expectEqual(fourth.attempts, 4, 'attempt counted');
+      expectEqual(ledger.status('t1').attempts, 4, 'read-only status: attempts');
+      expectEqual(ledger.status('t1').maxRetries, 3, 'read-only status: maxRetries');
+      ledger.releaseTask('t1');
+      expectEqual(ledger.status('t1').attempts, 0, 'release resets the task');
+      expectEqual(withinWallClock(0, 999, 1000), true, 'inside budget');
+      expectEqual(withinWallClock(0, 1001, 1000), false, 'budget exceeded');
+      expectEqual(withinWallClock(0, 1e12, 0), true, '0 budget = OFF');
+      expectEqual(DEFAULT_BOUNDS.maxRetries, 3, 'defaults preserve v1.2 behavior');
+      expectEqual(DEFAULT_BOUNDS.wallClockBudgetMs, 0, 'wall-clock off by default');
+    }),
+    check('router.fallback-verified-free-only', 'v1.3.1 IMP-R: fallback plan admits only current-evidence FREE candidates — paid never planned', () => {
+      const pool: FallbackPoolEntry[] = [
+        { key: 'primary::m', provider: 'primary', model: 'm', costClass: 'FREE_CONFIRMED', failureDomain: 'primary', score: 0.9 },
+        { key: 'paid::m', provider: 'paid', model: 'm', costClass: 'PAID', failureDomain: 'paid', score: 0.99 },
+        { key: 'b::m', provider: 'b', model: 'm', costClass: 'FREE_CONFIRMED', failureDomain: 'b', score: 0.8 },
+        { key: 'c::m', provider: 'c', model: 'm', costClass: 'FREE_LIMITED', failureDomain: 'c', score: 0.7 },
+        { key: 'same::m2', provider: 'primary', model: 'm2', costClass: 'FREE_CONFIRMED', failureDomain: 'primary', score: 0.6 },
+      ];
+      const evidence = new Map([
+        ['b::m', freeClaimEvidence('config', 0)],
+        ['c::m', { source: 'config' as const, checkedAt: 0, status: 'active' as const, expiresAt: 1000 }],
+      ]);
+      const plan = planCrossProviderFallbacks({ pool, excludeKey: 'primary::m', freeEvidence: evidence, now: 2000, maxFanout: 4 });
+      expectEqual(plan.map((f) => f.key).join(','), 'b::m', 'only the current-evidence free cross-provider entry');
+      expectEqual(plan[0]?.reason, 'FREE_CLAIM_config_CURRENT', 'reason documents the evidence basis');
+      // maxFanout 0 (or invalid) ⇒ empty plan — honest degradation.
+      expectEqual(planCrossProviderFallbacks({ pool, excludeKey: 'primary::m', freeEvidence: evidence, now: 2000, maxFanout: 0 }).length, 0, 'fanout 0 ⇒ empty');
+      // No evidence at all ⇒ empty plan (never a silent paid fallback).
+      expectEqual(planCrossProviderFallbacks({ pool, excludeKey: 'primary::m', freeEvidence: new Map(), now: 2000, maxFanout: 4 }).length, 0, 'no evidence ⇒ empty plan');
+    }),
+    check('router.fast-path-deterministic', 'v1.3.1 IMP-R: fast path — simple classes route directly; opt-in, risk-gated, label-driven only', () => {
+      const off = { enabled: false, simpleClasses: DEFAULT_SIMPLE_TASK_CLASSES };
+      expectEqual(isSimpleTask({ taskClass: 'SUMMARIZE' }, off), false, 'disabled by default (behavior-preserving)');
+      const on = { enabled: true, simpleClasses: DEFAULT_SIMPLE_TASK_CLASSES };
+      expectEqual(isSimpleTask({ taskClass: ' summarize ' }, on), true, 'normalized simple class');
+      expectEqual(isSimpleTask({ labels: ['TRANSLATE'] }, on), true, 'label match enables');
+      expectEqual(isSimpleTask({ taskClass: 'DEEP_RESEARCH' }, on), false, 'non-simple class untouched');
+      expectEqual(isSimpleTask({ taskClass: 'SUMMARIZE', risk: 'HIGH' }, on), false, 'measured risk blocks fast path');
+      expectEqual(isSimpleTask({}, on), false, 'no class/labels ⇒ no fast path');
+      expectEqual(normalizeTaskClass(' deep research '), 'DEEP RESEARCH', 'normalization trim+upper (spacing preserved)');
+      expectEqual(DEFAULT_FAST_PATH.enabled, false, 'default config disabled');
+    }),
   ];
 }
 
@@ -763,6 +1009,108 @@ export function verifierChecks(): Check[] {
     check('verifier.path-confined-helper', 'pathIsAllowed deterministic', () => {
       expectTrue(pathIsAllowed('/roots/data/a', ['/roots/data'], pathMod), 'allowed');
       expectTrue(!pathIsAllowed('/other/a', ['/roots/data'], pathMod), 'denied');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-verifier-hardening.mjs) ----
+    check('verifier.realpath-confinement', 'v1.3.1 FIX-B: REAL-path confinement rejects symlink escapes and sibling-prefix roots before any read', async () => {
+      const fakeReal = (map: Record<string, string>) => async (p: string) => {
+        const hit = map[p];
+        if (hit === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return hit;
+      };
+      // Symlink inside the root pointing OUTSIDE is rejected ('outside').
+      const escape = await resolveRealConfinement('/data/link/f.txt', ['/data'], nodePath, fakeReal({ '/data': '/data', '/data/link/f.txt': '/etc/secret.txt' }));
+      expectEqual(escape.kind, 'outside', 'symlink escape rejected');
+      // Sibling-prefix roots (/data vs /database) are NOT containment.
+      const sibling = await resolveRealConfinement('/database/f.txt', ['/data'], nodePath, fakeReal({ '/data': '/data', '/database/f.txt': '/database/f.txt' }));
+      expectEqual(sibling.kind, 'outside', 'sibling prefix rejected');
+      // In-root target resolves ok against real paths.
+      const inside = await resolveRealConfinement('/data/f.txt', ['/data'], nodePath, fakeReal({ '/data': '/data', '/data/f.txt': '/data/f.txt' }));
+      expectEqual(inside.kind, 'ok', 'in-root passes');
+      expectEqual(inside.kind === 'ok' ? inside.realTarget : '', '/data/f.txt', 'real target reported');
+      // Missing target ⇒ explicit FAIL mapping; other realpath errors ⇒ visible ERROR.
+      expectEqual((await resolveRealConfinement('/data/gone.txt', ['/data'], nodePath, fakeReal({ '/data': '/data' }))).kind, 'missing', 'missing target');
+      const loopErr = Object.assign(new Error('ELOOP'), { code: 'ELOOP' });
+      expectEqual((await resolveRealConfinement('/data/loop', ['/data'], nodePath, async () => { throw loopErr; })).kind, 'unresolvable', 'unresolvable visible');
+      // End-to-end through the file-exists validator: escape ⇒ UNAVAILABLE, never PASS.
+      const cfg = { allowCommands: false, allowNetwork: false, allowedRoots: ['/data'], commandTimeoutMs: 1000 };
+      const denied = await runValidator({
+        spec: { validatorId: 'f', type: 'file-exists', config: { path: '/data/link/f.txt' } },
+        config: cfg,
+        runtime: { ...noopRuntime, fsExists: async () => true, realpath: fakeReal({ '/data': '/data', '/data/link/f.txt': '/etc/secret.txt' }) },
+        pathMod: nodePath,
+        labPolicyConfirmed: false,
+      });
+      expectEqual(denied.status, 'UNAVAILABLE', 'escape ⇒ UNAVAILABLE');
+      expectEqual(denied.reasonCode, 'PATH_OUTSIDE_ALLOWED_ROOTS', 'confinement reason');
+    }),
+    check('verifier.schema-additional-properties', 'v1.3.1 FIX-E: additionalProperties is enforced — extra properties can never silently PASS', () => {
+      const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false };
+      expectEqual(validateJsonSchema({ ok: true }, schema).outcome, 'valid', 'conforming instance valid');
+      const extra = validateJsonSchema({ ok: true, sneaky: 1 }, schema);
+      expectEqual(extra.outcome, 'invalid', 'extra property rejected');
+      expectTrue(extra.outcome === 'invalid' && extra.issues.some((i) => i.includes('sneaky')), 'issue names the property');
+      // Boolean + schema-valued forms both enforced.
+      expectEqual(
+        validateJsonSchema({ ok: true, x: 'any' }, { type: 'object', properties: { ok: { type: 'boolean' } }, additionalProperties: true }).outcome,
+        'valid',
+        'additionalProperties true allows',
+      );
+      expectEqual(
+        validateJsonSchema({ ok: true, tag: 7 }, { type: 'object', properties: { ok: { type: 'boolean' } }, additionalProperties: { type: 'string' } }).outcome,
+        'invalid',
+        'schema-valued additionalProperties enforced',
+      );
+      // Back-compat wrapper reports the violation instead of a silent empty list.
+      expectTrue(validateJsonSchemaSubset({ ok: true, sneaky: 1 }, schema).length > 0, 'subset wrapper non-empty');
+    }),
+    check('verifier.schema-unsupported-visible', 'v1.3.1 FIX-E: unsupported keyword/dialect ⇒ ERROR/UNAVAILABLE, never a fake PASS', async () => {
+      // A keyword outside the pinned deterministic subset is refused at compile time.
+      const unsupportedSchema = { type: 'object', dependentRequired: { a: ['b'] } };
+      const unsupported = validateJsonSchema({ a: 1 }, unsupportedSchema);
+      expectEqual(unsupported.outcome, 'unsupported', 'unsupported keyword refused');
+      expectTrue(unsupported.outcome === 'unsupported' && unsupported.reason.startsWith('SCHEMA_UNSUPPORTED_KEYWORD'), 'pinned reason prefix');
+      // Declared draft-04 dialect ⇒ unsupported (no silent downgrade).
+      expectEqual(
+        validateJsonSchema({}, { $schema: 'http://json-schema.org/draft-04/schema#', type: 'object' }).outcome,
+        'unsupported',
+        'draft-04 dialect refused',
+      );
+      // Through runValidator: UNAVAILABLE (never PASS) with a value-free reason.
+      const cfg = { allowCommands: false, allowNetwork: false, allowedRoots: [], commandTimeoutMs: 1000 };
+      const result = await runValidator({
+        spec: { validatorId: 's', type: 'json-schema', config: { schema: unsupportedSchema } },
+        config: cfg,
+        runtime: noopRuntime,
+        pathMod,
+        labPolicyConfirmed: false,
+        subject: '{"a":1,"b":2}',
+      });
+      expectEqual(result.status, 'UNAVAILABLE', 'unsupported ⇒ UNAVAILABLE');
+      expectEqual(result.reasonCode, 'SCHEMA_UNSUPPORTED', 'pinned reason code');
+      // The back-compat subset wrapper can never return a silent empty list for broken schemas.
+      expectTrue(validateJsonSchemaSubset({}, unsupportedSchema).length > 0, 'broken schema reported non-empty');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-evidence-binding.mjs) ----
+    check('verifier.evidence-close-binding', 'v1.3.1 IMP-V: close evidence binds to CURRENT artifact bytes; UNAVAILABLE is never a PASS', () => {
+      const sha1 = 'a'.repeat(64);
+      const sha2 = 'b'.repeat(64);
+      const record = {
+        schemaVersion: EVIDENCE_SCHEMA_VERSION,
+        taskId: 't1',
+        attempt: 1,
+        artifact: { sha256: sha1 },
+        validatorId: 'v',
+        validatorType: 'exact-text',
+        status: 'PASS',
+        reasonCode: 'OK',
+        recordedAt: 1,
+      };
+      expectEqual(evaluateEvidenceForClose(record, { sha256: sha1 }).reasonCode, 'EVIDENCE_CURRENT_PASS', 'current PASS ok');
+      expectEqual(evaluateEvidenceForClose(record, { sha256: sha2 }).reasonCode, 'EVIDENCE_STALE', 'stale hash rejected');
+      expectEqual(evaluateEvidenceForClose({ ...record, status: 'UNAVAILABLE' }, { sha256: sha1 }).reasonCode, 'EVIDENCE_NOT_PASS', 'UNAVAILABLE ≠ PASS');
+      expectEqual(evaluateEvidenceForClose({ ...record, status: 'FAIL' }, { sha256: sha1 }).reasonCode, 'EVIDENCE_NOT_PASS', 'FAIL ≠ PASS');
+      expectEqual(evaluateEvidenceForClose({ schemaVersion: EVIDENCE_SCHEMA_VERSION, status: 'PASS' }, { sha256: sha1 }).reasonCode, 'EVIDENCE_UNBOUND', 'unbound record refused');
+      expectEqual(isEvidenceCurrent(record, { sha256: sha1 }), true, 'helper mirrors the evaluation');
     }),
   ];
 }
@@ -880,6 +1228,70 @@ export function memoryChecks(): Check[] {
       expectTrue(!bad, 'invalid note rejected');
       expectEqual(ledger.stats().rejected, 1, 'rejection counted');
       expectEqual(ledger.stats().entries, 0, 'nothing stored');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-memory-isolation.mjs) ----
+    check('memory.identity-fail-closed', 'v1.3.1 FIX-C: unknown identity is null — selections never fall back to other state', () => {
+      expectEqual(normalizeIdentityText(' s1 '), 's1', 'trimmed string is an identity');
+      expectEqual(normalizeIdentityText(''), null, 'empty is not an identity');
+      expectEqual(normalizeIdentityText(42), null, 'non-string is not an identity');
+      expectEqual(identityOf({ sessionId: 's1' }), null, 'missing task ⇒ unknown identity');
+      expectEqual(identityOf({ sessionId: 's1', taskId: '   ' }), null, 'blank task ⇒ unknown identity');
+      expectEqual(identityOf({ sessionId: 's1', taskId: 't1' })?.sessionId, 's1', 'both parts required (session)');
+      expectEqual(identityOf({ sessionId: 's1', taskId: 't1' })?.taskId, 't1', 'both parts required (task)');
+      expectTrue(identityKey({ sessionId: 's1', taskId: 't1' }).includes('\u0000'), 'NUL-separated key avoids concat ambiguity');
+    }),
+    check('memory.store-own-selection-only', 'v1.3.1 FIX-C: selections are (session, task)-owned — no cross-task or cross-session lookup', () => {
+      const store = new SelectionStore(8);
+      const mkSel = (tag: string): MemorySelection => ({
+        selected: [{ item: memoryItem({ id: `m-${tag}` }), reason: 'UNIT' }],
+        excluded: [],
+        totalEstimatedTokens: 10,
+        budgetTokens: 100,
+        withinBudget: true,
+        providerState: 'UNAVAILABLE',
+      });
+      store.record({ sessionId: 's1', taskId: 't1' }, mkSel('a'));
+      store.record({ sessionId: 's2', taskId: 't1' }, mkSel('b'));
+      store.record({ sessionId: 's1', taskId: 't2' }, mkSel('c'));
+      // Exact identity returns the owner's own selection only.
+      expectTrue(store.get({ sessionId: 's1', taskId: 't1' })?.selected[0].item.id === 'm-a', 's1/t1 owns a');
+      expectTrue(store.get({ sessionId: 's2', taskId: 't1' })?.selected[0].item.id === 'm-b', 's2/t1 owns b (same task id, other session)');
+      // Cross-identity lookups fail closed (undefined), never fall back.
+      expectEqual(store.get({ sessionId: 's1', taskId: 't9' }), undefined, 'unknown task ⇒ nothing');
+      expectEqual(store.get({ sessionId: 'sX', taskId: 't1' }), undefined, 'unknown session ⇒ nothing');
+      // Active-task pointer: set ONLY by the session's own scoped record.
+      expectEqual(store.activeTaskOf('s1'), 't2', 'active pointer is the last recorded task');
+      expectEqual(store.activeTaskOf('sX'), undefined, 'no active task ⇒ renderer renders nothing');
+      // Releasing the active task never resurrects an older selection as "active".
+      store.releaseTask({ sessionId: 's1', taskId: 't2' });
+      expectEqual(store.activeTaskOf('s1'), undefined, 'no resurrection');
+      expectTrue(store.get({ sessionId: 's1', taskId: 't1' })?.selected[0].item.id === 'm-a', 'older entry reachable by exact identity only');
+    }),
+    check('memory.store-lru-bounded', 'v1.3.1 FIX-C: LRU bounded with counted evictions, recency refresh, and real cleanup', () => {
+      const store = new SelectionStore(2);
+      const mkSel = (): MemorySelection => ({ selected: [], excluded: [], totalEstimatedTokens: 0, budgetTokens: 0, withinBudget: true, providerState: 'UNAVAILABLE' });
+      store.record({ sessionId: 's1', taskId: 't1' }, mkSel());
+      store.record({ sessionId: 's1', taskId: 't2' }, mkSel());
+      store.get({ sessionId: 's1', taskId: 't1' }); // touch → t2 becomes the LRU victim
+      store.record({ sessionId: 's1', taskId: 't3' }, mkSel());
+      expectEqual(store.stats().entries, 2, 'capacity honored mechanically');
+      expectEqual(store.stats().evictions, 1, 'eviction counted');
+      expectEqual(store.get({ sessionId: 's1', taskId: 't2' }), undefined, 'LRU victim evicted');
+      expectTrue(store.get({ sessionId: 's1', taskId: 't1' }) !== undefined, 'recently used survives');
+      // Cleanup APIs really empty the store (task end / cancel / dispose paths).
+      expectEqual(store.releaseSession('s1'), 2, 'session wipe counts');
+      expectEqual(store.stats().entries, 0, 'session store empty');
+      expectEqual(store.stats().activeTasks, 0, 'active pointers wiped');
+      store.record({ sessionId: 's2', taskId: 't1' }, mkSel());
+      expectEqual(store.clear(), 1, 'clear counts (plugin dispose)');
+      expectEqual(store.stats().entries, 0, 'dispose leaves nothing');
+    }),
+    check('memory.store-cap-clamped', 'v1.3.1 FIX-C: adapter boundary clamps the configured cap (floor 8); mechanical store honors small caps', () => {
+      expectEqual(clampSelectionStoreCap(undefined), DEFAULT_SELECTION_STORE_CAP, 'undefined ⇒ default 128');
+      expectEqual(clampSelectionStoreCap(3), MIN_SELECTION_STORE_CAP, 'below floor ⇒ 8');
+      expectEqual(clampSelectionStoreCap(8.9), MIN_SELECTION_STORE_CAP, 'fractional floors to 8');
+      expectEqual(clampSelectionStoreCap(9), 9, 'valid cap preserved');
+      expectEqual(new SelectionStore(3).stats().capacity, 3, 'mechanical store honors small caps so gates can exercise the LRU');
     }),
   ];
 }
@@ -1075,6 +1487,71 @@ export function workflowChecks(): Check[] {
       expectEqual(limits.agentContactPolicy, 'DENY', 'valid config accepted');
       expectEqual(limits.allowedContacts.length, 1, 'graph accepted');
       expectTrue(WorkflowConfigError !== undefined, 'error type present');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-a2a-falsepositive.mjs) ----
+    check('workflow.comms-registry-identity', 'v1.3.1 FIX-D: tool identity comes from the trusted registry — argument names like `target` never imply A2A', () => {
+      const registry = buildCommsToolRegistry(['desk_pager']);
+      // Ordinary file tools are NOT comms tools, whatever their argument names.
+      expectEqual(isCommunicationTool(registry, 'copy_file'), false, 'copy_file never inspected (false positive killed)');
+      expectEqual(isCommunicationTool(registry, 'file-write'), false, 'write tool not inspected');
+      // Registry-identified tools are inspected with a FIXED channel.
+      expectEqual(isCommunicationTool(registry, 'send_message'), true, 'pinned message tool');
+      expectEqual(commsChannelOf(registry, 'subagent'), 'spawn', 'pinned spawn channel');
+      expectEqual(commsChannelOf(registry, 'desk_pager'), 'message', 'extended tool channel');
+      // Normalization is trim+lowercase; empty/unknown names never match.
+      expectEqual(isCommunicationTool(registry, ' SEND_MESSAGE '), true, 'normalized match');
+      expectEqual(isCommunicationTool(registry, ''), false, 'empty never matches');
+      expectEqual(isCommunicationTool(registry, null), false, 'non-string never matches');
+      // Extension is ADD-ONLY: a config entry can never shadow a pinned default channel.
+      expectEqual(commsChannelOf(buildCommsToolRegistry(['subagent']), 'subagent'), 'spawn', 'default channel kept');
+      expectEqual(DEFAULT_COMMS_TOOL_REGISTRY.length, 12, 'default registry frozen at 12 entries');
+      expectEqual(normalizeToolName(' Spawn-Agent '), 'spawn-agent', 'normalization convention');
+      expectEqual(inferCommsChannel('spawn_helper'), 'spawn', 'spawn token infers spawn channel');
+      expectEqual(inferCommsChannel('pager'), 'message', 'no spawn token ⇒ message channel');
+    }),
+    check('workflow.a2a-unresolvable-recipient', 'v1.3.1 FIX-D: malformed comms call is flagged always, blocked iff DENY (fail-closed, no crash)', () => {
+      expectEqual(A2A_RECIPIENT_UNRESOLVABLE_REASON, 'a2a_recipient_unresolvable', 'pinned reason');
+      const deny = unresolvableRecipientDecision({ agentContactPolicy: 'DENY' }, 'message');
+      expectTrue(deny.flagged && deny.blocked, 'DENY blocks pre-fact');
+      expectEqual(deny.reasonCode, 'A2A_RECIPIENT_UNRESOLVABLE', 'explicit reason, never silent');
+      const logOnly = unresolvableRecipientDecision({ agentContactPolicy: 'LOG_ONLY' }, 'spawn');
+      expectTrue(logOnly.flagged && !logOnly.blocked, 'LOG_ONLY audits without blocking');
+    }),
+    // ---- v1.3.1 review-hardening (evidence-bound to real/v131-evidence-binding.mjs) ----
+    check('workflow.close-evidence-record-validation', 'v1.3.1 IMP-V: close evidence records validate structurally — malformed is never evidence', () => {
+      const sha = 'c'.repeat(64);
+      const record = {
+        schemaVersion: 'dsh-supreme/evidence@1', taskId: 't1', attempt: 1, status: 'PASS',
+        reasonCode: 'OK', validatorId: 'v', validatorType: 'exact-text', artifact: { sha256: sha },
+      };
+      expectEqual(validateCloseEvidenceRecord(record)?.taskId, 't1', 'well-formed record accepted');
+      expectEqual(validateCloseEvidenceRecord({ ...record, artifact: 'nope' }), null, 'non-object artifact refused');
+      expectEqual(validateCloseEvidenceRecord({ ...record, artifact: { sha256: 'NOT-A-HASH' } }), null, 'malformed hash refused');
+      expectEqual(validateCloseEvidenceRecord({ ...record, attempt: 0 }), null, 'attempt must be ≥ 1');
+      expectEqual(validateCloseEvidenceRecord({ ...record, schemaVersion: 'other@2' }), null, 'schema version pinned');
+      expectEqual(validateCloseEvidenceRecord('PASS'), null, 'non-object refused');
+    }),
+    check('workflow.close-gate-evidence-bound', 'v1.3.1 IMP-V: HIGH-risk close requires a PASS bound to the CURRENT artifact (stale/bare/unavailable all block)', () => {
+      const limits = { requireVerifierPassOnClose: true };
+      const sha1 = 'a'.repeat(64);
+      const sha2 = 'b'.repeat(64);
+      const passRecord = {
+        schemaVersion: 'dsh-supreme/evidence@1', taskId: 't1', attempt: 1, status: 'PASS' as const,
+        reasonCode: 'OK', validatorId: 'v', validatorType: 'exact-text', artifact: { sha256: sha1 },
+      };
+      // Current-bound PASS closes.
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS', evidence: passRecord, artifact: { sha256: sha1 } }).reasonCode, 'EVIDENCE_CURRENT_PASS', 'current PASS closes');
+      // Stale PASS (artifact bytes changed since verification) blocks — exactly like no-PASS.
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS', evidence: passRecord, artifact: { sha256: sha2 } }).reasonCode, 'EVIDENCE_STALE', 'stale hash blocks');
+      // A bare recorded PASS with a tracked artifact but NO bound record fails closed.
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS', artifact: { sha256: sha1 } }).reasonCode, 'EVIDENCE_CURRENCY_UNVERIFIED', 'bare PASS cannot prove coverage');
+      // UNAVAILABLE verification never closes; contradicting labels never close.
+      const unavailable = { ...passRecord, status: 'UNAVAILABLE' as const };
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'UNAVAILABLE', evidence: unavailable, artifact: { sha256: sha1 } }).reasonCode, 'VERIFIER_UNAVAILABLE_BLOCKS_CLOSE', 'UNAVAILABLE blocks');
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS', evidence: { ...passRecord, status: 'FAIL' as const }, artifact: { sha256: sha1 } }).reasonCode, 'EVIDENCE_STATUS_CONFLICT', 'label conflict blocks');
+      // Malformed evidence is EVIDENCE_UNBOUND; LOW risk stays unrestricted.
+      expectEqual(canCloseTask(limits, { risk: 'HIGH', verifierStatus: 'PASS', evidence: { broken: true }, artifact: { sha256: sha1 } }).reasonCode, 'EVIDENCE_UNBOUND', 'unbound blocks');
+      expectTrue(canCloseTask(limits, { risk: 'LOW', verifierStatus: 'MISSING' }).closable, 'LOW risk unrestricted');
     }),
   ];
 }

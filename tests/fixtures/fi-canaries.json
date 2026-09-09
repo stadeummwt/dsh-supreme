@@ -1,0 +1,25 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "audit-metadata-bounds",
+  "description": "Synthetic canary strings planted into content-bearing inputs (task text, tool arguments, reasoning blocks, file contents, request seeds) across ALL failure-injection scenarios. None of them may ever appear in any observability record. The allowed key set is the REAL engine's RECORD_FIELDS export (imported, not duplicated here).",
+  "canaries": {
+    "prompt": "V131FI_CANARY_PROMPT_7f3a",
+    "response": "V131FI_CANARY_RESPONSE_c21d",
+    "credential": "V131FI_CANARY_CREDENTIAL_9b40",
+    "reasoning": "V131FI_CANARY_REASONING_5e82"
+  },
+  "expected": {
+    "allowlistSource": "RECORD_FIELDS_ENGINE_EXPORT",
+    "minRecords": 15,
+    "requiredEvents": [
+      "route_decision",
+      "route_cost_denied",
+      "free_route_evidence",
+      "verification",
+      "a2a_contact",
+      "memory_selection_scoped",
+      "memory_selection_released",
+      "assistant_message"
+    ]
+  }
+}

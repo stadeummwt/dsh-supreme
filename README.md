@@ -116,7 +116,8 @@ Don't trust this README. Run these:
 
 | Command | Verdict marker | What it proves |
 |---|---|---|
-| `bun run suite` | `COMPLETE` | **78/78** Level-A checks + **5/5** real-loader boots + v1.2/v1.3 audit gates |
+| `bun run suite` | `COMPLETE` | **101/101** Level-A checks + **5/5** real-loader boots + v1.2/v1.3/v1.3.1 audit gates |
+| `bun run v131:verify` | `V131_COST_FIX_VERIFIED` · `V131_VERIFIER_FIX_VERIFIED` · `V131_MEMORY_FIX_VERIFIED` · `V131_A2A_FIX_VERIFIED` · `V131_EVIDENCE_BINDING_VERIFIED` · `V131_OUTCOME_ROUTING_VERIFIED` · `V131_FAILURE_INJECTION_VERIFIED` | Review-hardening end-to-end: cost pre-dispatch deny, symlink-proof roots, JSON-schema strictness, memory isolation, A2A registry, evidence staleness, outcome routing, failure injection (**465 probes** — see [`docs/REVIEW-FIXES-v1.3.1.md`](./docs/REVIEW-FIXES-v1.3.1.md)) |
 | `bun run v13:verify` | `V13_POLICY_E2E_COMPLETE` · `V13_WORKFLOW_E2E_COMPLETE` · `V13_ROUTING_E2E_COMPLETE` | All 7 v1.3 ASTRA features end-to-end: real engines + real pinned-cordis adapters (85 + 82 + 17 probes) |
 | `bun run bundle:verify` | `BUNDLE_E2E_COMPLETE` | Real `dsh plugin add` → reconciler → boot → 13 services → user-patch override wins → clean dispose |
 | `bun run composition:verify` | `COMPOSITIONS_E2E_COMPLETE` | All 4 fragments: service presence **and absence**, relative `dataDir` write-through |
@@ -124,19 +125,21 @@ Don't trust this README. Run these:
 | `bun run v3:verify` | `V3_CONFIG_REVIEW_EVIDENCE` | The silent-strip trap, live: a wrong config loses 5/6 keys → corrected config enforces 6/6 |
 
 ```text
-Level A unit checks      78/78 PASS   (policy 16 · observability 7 · benchmark 8 · router 16
-                                       verifier 7 · memory 9 · workflow 15)
+Level A unit checks      101/101 PASS  (policy 17 · observability 7 · benchmark 11 · router 23
+                                       verifier 11 · memory 13 · workflow 19)
+v1.3.1 review probes     465/465      (cost 37 · verifier 43 · memory 88 · a2a 63 ·
+                                       evidence 82 · outcome-routing 80 · failure-injection 72)
 v1.3 E2E probes          184/184      (policy 85 · workflow 82 · routing 17 — real engines,
                                        real pinned-cordis adapters, no upstream build needed)
 Real-loader boots        5/5 PASS     (supreme-minimal, core, standard, supreme, lab)
-  boot times             supreme-minimal ~55–60 ms · core/standard/supreme/lab ~830–980 ms
+  boot times             supreme-minimal ~51–60 ms · core/standard/supreme/lab ~830–990 ms
 Keyless scenario         9/9 gates PASS (real DSH session; router picks free route; PAID rejected)
 Security                 sentinel leaks = 0 · paid automatic fallback = DISABLED
 v1.2/v1.3 audit gates    config-key hygiene PASS · pinned-ref scan PASS ·
                          six-surface audit PASS (incl. the pinned `workflow/agent-start` seam) ·
                          schema contract PASS (3 schemas)
 Upstream integrity       commit unchanged · worktree clean · patches = 0
-Performance              router ≈ 0.02–0.03 ms / 1k · observability serialize ≈ 0.001–0.005 ms / 1k
+Performance              router ≈ 0.02–0.04 ms / 1k · observability serialize ≈ 0.001–0.007 ms / 1k
 VERDICT                  COMPLETE
 ```
 
@@ -166,6 +169,25 @@ is a lifecycle fixture — it is **never** cited as DSH proof.
 | Your own audit, offline | **Six-surface audit**: prompts · hooks · MCP · permissions · secrets · agent files | suite check PASS |
 
 ---
+
+## 🛡️ v1.3.1 review-hardening
+
+Response to an external v1.3.0 review: **5 findings reproduced → fixed → proven**
+(each with a failing test on the original code), plus outcome-based routing,
+evidence-bound verification, fast path/recovery, and a failure-injection
+harness. Full per-issue evidence — reproduction commands, root causes, before/
+after outputs, remaining limits, and rollback steps (bash + PowerShell) — lives
+in [`docs/REVIEW-FIXES-v1.3.1.md`](./docs/REVIEW-FIXES-v1.3.1.md).
+
+| # | Severity | Finding (v1.3.0) | Fix (v1.3.1) |
+|---|---|---|---|
+| A | P1 | Paid/unknown-model LLM requests dispatched with no cost check | Pre-dispatch deny at `agent/request` + `llm/stream` backstop; zero adapter calls on deny; UNKNOWN denied in production RM0; LAB exception contract kept |
+| B | P1 | Symlink inside `allowedRoots` escaped the file-hash verifier | Native realpath validation of roots AND targets before any read; traversal/sibling-prefix/missing-file rejected; race reduced (not race-proof — documented) |
+| C | P1 | `latestSelection` shared across sessions/tasks (memory contamination) | Selections bound to (session, task); unknown identity → empty; bounded LRU + cleanup on end/cancel/dispose |
+| D | P2 | `copy_file {target: b.txt}` misclassified as agent-to-agent contact | Trusted comms-tool registry gates recipient extraction; post-fact emit stays detect-only |
+| E | P2 | JSON Schema `additionalProperties:false` silently ignored (false PASS) | Deterministic validator: unsupported keywords → `ERROR`/`UNAVAILABLE`, never silent downgrade |
+
+Run it: `bun run v131:verify` (7 markers, 465 probes) — then read the doc before trusting this table.
 
 ## 🧬 v1.3 ASTRA-hardening features
 

@@ -68,10 +68,15 @@ const OFFICIAL_SEAMS = new Set([
   'subagent/end',
   'workflow/start',
   'workflow/end',
-  // v1.3: pinned-verified workflow agent lifecycle seam (V13-B) — emit site
+  // workflow/agent-start (V13-B) — emit site
   // packages/workflow/workflow/src/index.ts:68, pin d347e703
   // (WorkflowRunInfo + WorkflowAgentInfo{seq,label,phase?,childId}).
   'workflow/agent-start',
+  // v1.3.1: pinned-verified llm stream waterfall (FIX-A) — declared around
+  // EVERY adapter stream: packages/llm/llm/src/index.ts:58-74 (dispatch site
+  // :1097-1107); upstream binds it itself in packages/llm/llm/src/invariant.ts:88
+  // and packages/core/agent-loop/src/invariant.ts:21, pin d347e703.
+  'llm/stream',
 ]);
 
 const PRODUCTION_CONFIGS = [

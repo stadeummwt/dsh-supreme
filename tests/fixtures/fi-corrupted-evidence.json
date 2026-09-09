@@ -1,0 +1,26 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "corrupted-evidence",
+  "description": "Injected CORRUPTED EVIDENCE: a verifier file-hash artifact is tampered with after its evidence was recorded; the REAL verifier adapter (real-path confined runtime) must reject the stale evidence with FAIL HASH_MISMATCH (never a fabricated PASS), an untouched sibling artifact must keep verifying, and the REAL workflow-policy close gate must block a HIGH-risk close on the corrupted verdict while still allowing the fresh PASS.",
+  "verifier": { "commandTimeoutMs": 1000 },
+  "files": {
+    "fresh": { "name": "artifact-report.txt", "content": "artifact body line 1\nartifact body line 2\n" },
+    "corrupted": {
+      "name": "build-manifest.txt",
+      "contentBefore": "manifest v1 checksum baseline\n",
+      "contentAfter": "manifest v1 TAMPERED baseline V131FI_CANARY_RESPONSE_c21d\n"
+    }
+  },
+  "closeGate": { "risk": "HIGH" },
+  "expected": {
+    "freshFirstStatus": "PASS",
+    "corruptedFirstStatus": "PASS",
+    "corruptedSecondStatus": "FAIL",
+    "corruptedSecondReason": "HASH_MISMATCH",
+    "freshSecondStatus": "PASS",
+    "closeBlockedOnFail": false,
+    "closeBlockedReason": "VERIFIER_FAIL_BLOCKS_CLOSE",
+    "closeAllowedOnPass": true,
+    "closeAllowedReason": "VERIFIER_PASS_RECORDED"
+  }
+}

@@ -27,27 +27,65 @@
  *     task class listed in `approvalRequiredFor` but no approval flag, or
  *     touching paths outside the v1.2 path scope, are recorded as
  *     `overreach_suspected` (labels, levels, flags, counts — never content).
+ *
+ * v1.3.1 (FIX-D — A2A false-positive fix):
+ *   - Tool identity FIRST: a call is treated as inter-agent communication
+ *     only if its tool NAME is in the TRUSTED comms-tool registry
+ *     (`DEFAULT_COMMS_TOOL_REGISTRY`, extended by the `commsToolNames`
+ *     config key). Recipient extraction from the fixed argument allowlist
+ *     (`agent_id`/`to`/`target`) happens ONLY after registry identification
+ *     — never from argument names alone, and never from model-provided
+ *     labels. Ordinary tools (e.g. `copy_file { target: 'b.txt' }`) are never
+ *     inspected for recipients.
+ *   - Malformed communication calls (registry-identified message tool with a
+ *     missing/empty recipient) are audited explicitly with reason code
+ *     `a2a_recipient_unresolvable` and refused pre-fact under DENY (fail-
+ *     closed) — no crash, no silent pass. A spawn call without a declared
+ *     target is its normal pinned shape (the childId is assigned post-fact),
+ *     so it is not malformed; the post-fact DETECT-only emit audit covers
+ *     spawns.
+ *
+ * v1.3.1 (IMP-V — evidence-bound close, Improvement §3A):
+ *   - `canCloseTask` accepts a bound VerificationEvidence (supremeVerifier
+ *     `runAndRecord`) plus the CURRENT artifact identity. A HIGH-risk close
+ *     under `requireVerifierPassOnClose` then requires a structurally bound
+ *     PASS whose artifact sha-256 (and revision, when both sides carry one)
+ *     matches the current artifact: stale/unbound/contradicted evidence
+ *     blocks with a clear reason code (EVIDENCE_STALE / EVIDENCE_UNBOUND /
+ *     EVIDENCE_STATUS_CONFLICT / EVIDENCE_CURRENCY_UNVERIFIED). The v1.2
+ *     status-only path is retained unchanged.
+ *   - Close-gate verdicts under an ACTIVE gate are audited as `close_gate`
+ *     events — ids, hash prefixes and reason codes ONLY, never content.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { z } from 'zod';
 import {
   A2A_CONTACT_DENIED_REASON,
   A2A_CONTACT_EVENT,
+  A2A_RECIPIENT_UNRESOLVABLE_REASON,
+  CLOSE_GATE_EVENT,
   OVERREACH_EVENT,
+  buildCommsToolRegistry,
   buildDelegationScope,
   canCloseTask,
+  commsChannelOf,
   decideWorkflow,
   evaluateAgentContact,
   evaluateOverreach,
   evaluatePathScope,
+  isCommunicationTool,
   normalizeContactId,
   normalizeTaskClass,
+  unresolvableRecipientDecision,
+  validateCloseEvidenceRecord,
   validateWorkflowLimits,
   type AgentContact,
   type AgentContactChannel,
   type AgentContactDecision,
+  type CloseArtifactIdentity,
   type CloseDecision,
   type CloseVerifierStatus,
+  type CommsToolRegistry,
   type DelegationOverreachRequest,
   type DelegationScope,
   type OverreachDecision,
@@ -107,6 +145,12 @@ export const Config = z.object({
   maxRiskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('HIGH'),
   /** v1.3: task classes that require an approval flag on the delegation request. */
   approvalRequiredFor: z.array(z.string().min(1).max(128)).default([]),
+  /**
+   * v1.3.1 (FIX-D): extra tool names treated as communication/delegation tools
+   * — EXTENDS the trusted DEFAULT_COMMS_TOOL_REGISTRY (cannot remove or shadow
+   * a default entry). Registry identity, never argument names or model labels.
+   */
+  commsToolNames: z.array(z.string().min(1).max(128)).default([]),
 });
 
 export type WorkflowPolicyService = {
@@ -115,8 +159,16 @@ export type WorkflowPolicyService = {
   limits(): WorkflowLimitsConfig;
   /** v1.2: deterministic surgical path scope (blockedPaths win). */
   evaluatePathScope(path: string): PathScopeDecision;
-  /** v1.2: deterministic verifier-gated close decision. */
-  canCloseTask(input: { risk: 'LOW' | 'MEDIUM' | 'HIGH'; verifierStatus: CloseVerifierStatus }): CloseDecision;
+  /** v1.2: deterministic verifier-gated close decision.
+   *  v1.3.1 (IMP-V): pass `evidence` (a bound VerificationEvidence from
+   *  supremeVerifier.runAndRecord) and `artifact` (the CURRENT artifact
+   *  identity) to enforce evidence currency — stale PASS ⇒ no-PASS. */
+  canCloseTask(input: {
+    risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    verifierStatus: CloseVerifierStatus;
+    evidence?: unknown;
+    artifact?: CloseArtifactIdentity | null;
+  }): CloseDecision;
   /** v1.3 P2: deterministic A2A contact-graph evaluation (host admission check). */
   evaluateContact(contact: AgentContact): AgentContactDecision;
   /** v1.3 P3: deterministic overreach evaluation; records `overreach_suspected` when overreach. */
@@ -126,6 +178,10 @@ export type WorkflowPolicyService = {
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
   const limits = validateWorkflowLimits(config as Partial<WorkflowLimitsConfig>);
   const observability = ctx.supremeObservability;
+  // v1.3.1 (FIX-D): trusted communication/delegation registry, built once —
+  // default set + the host's `commsToolNames` extension. The ONLY authority
+  // for whether a tool call is subject to A2A contact inspection.
+  const commsTools: CommsToolRegistry = buildCommsToolRegistry(limits.commsToolNames);
 
   // --- v1.3 deterministic helpers (ids/roles/labels only — never content) ---
 
@@ -188,22 +244,18 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     return typeof rec.id === 'string' && rec.id.trim() !== '' ? normalizeContactId(rec.id) : '';
   };
 
-  // Fixed extraction contract: the inter-agent TARGET is read from the call's
-  // TOP-LEVEL arguments under these names only — the pinned `send_message`
-  // tool carries `agent_id` (tool-subagent-control); `to`/`target` are the
-  // declared delegation-style spellings. Values are used solely as bounded
-  // graph ids for matching/audit.
+  // Recipient extraction contract (v1.3.1 FIX-D): the inter-agent TARGET is
+  // read from the call's TOP-LEVEL arguments under these names only — the
+  // pinned `send_message` tool carries `agent_id` (tool-subagent-control);
+  // `to`/`target` are the declared delegation-style spellings. This map runs
+  // ONLY for registry-identified communication tools — never as a heuristic
+  // over arbitrary tools (an argument named `target` on `copy_file` is a file
+  // name, not an agent id). Values are used solely as bounded graph ids for
+  // matching/audit.
   const CONTACT_TARGET_ARG_NAMES = ['agent_id', 'to', 'target'] as const;
-  // Pinned model-facing spawn tool name (tool-subagent default `toolName`).
+  // Pinned model-facing spawn tool name (tool-subagent default `toolName`)
+  // — still used to recognize delegation-shaped calls for the P3 audit.
   const SPAWN_TOOL_NAMES = new Set(['subagent']);
-
-  const channelOf = (toolName: string): AgentContactChannel => {
-    if (SPAWN_TOOL_NAMES.has(toolName)) return 'spawn';
-    const tokens = toolName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    return tokens.some((t) => t === 'spawn' || t === 'delegate' || t === 'subagent' || t === 'workflow')
-      ? 'spawn'
-      : 'message';
-  };
 
   const firstContactTarget = (args: unknown): string => {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return '';
@@ -270,7 +322,23 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
     buildDelegationScope: (scope) => buildDelegationScope(scope),
     limits: () => limits,
     evaluatePathScope: (path) => evaluatePathScope(limits, path),
-    canCloseTask: (input) => canCloseTask(limits, input),
+    canCloseTask: (input) => {
+      const decision = canCloseTask(limits, input);
+      // v1.3.1 (IMP-V): audit close-gate verdicts ONLY under an ACTIVE gate
+      // (requireVerifierPassOnClose + HIGH risk). Value-free by contract:
+      // task id, artifact hash PREFIX and reason codes — never artifact
+      // content, prompts or reasoning.
+      if (limits.requireVerifierPassOnClose && input.risk === 'HIGH') {
+        const bound = validateCloseEvidenceRecord(input.evidence);
+        const artifactSha = input.artifact && typeof input.artifact.sha256 === 'string' ? input.artifact.sha256 : undefined;
+        observability.record(CLOSE_GATE_EVENT, {
+          ...(bound !== null ? { task: clip(bound.taskId) } : {}),
+          ...(artifactSha !== undefined ? { artifact: artifactSha.slice(0, 12) } : {}),
+          detail: `risk:${input.risk}:outcome:${decision.closable ? 'ALLOWED' : 'BLOCKED'}:reason:${decision.reasonCode}`,
+        });
+      }
+      return decision;
+    },
     evaluateContact: (contact) => evaluateAgentContact(limits, contact),
     evaluateDelegation: (request) => {
       const verdict = evaluateOverreach(limits, request);
@@ -285,15 +353,36 @@ export function apply(ctx: Context, config: z.infer<typeof Config>): void {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const toolName = typeof exec?.name === 'string' ? exec.name : '';
 
-    // P2 — evaluate the inter-agent channel BEFORE the call proceeds.
-    if (toolName !== '') {
+    // P2 — tool identity FIRST (v1.3.1 FIX-D): only registry-identified
+    // communication/delegation tools are A2A-inspected. Ordinary tools are
+    // never touched, whatever their argument names happen to be.
+    if (isCommunicationTool(commsTools, toolName)) {
       const sender = senderOf(exec);
-      const target = sender !== '' ? firstContactTarget(exec?.arguments) : '';
-      if (target !== '') {
+      const channel: AgentContactChannel = commsChannelOf(commsTools, toolName);
+      // Recipient extraction happens ONLY after registry identification,
+      // through the fixed argument-name allowlist above.
+      const target = firstContactTarget(exec?.arguments);
+      if (target === '' && channel === 'message') {
+        // Malformed communication call: a message-channel tool carries its
+        // recipient by contract — a missing/empty recipient cannot be checked
+        // against the declared graph. Explicit audit (never a silent pass);
+        // refused pre-fact under DENY (fail-closed). Spawn tools are exempt:
+        // a spawn without a declared target is its normal pinned shape (the
+        // childId is assigned post-fact) and is covered by the DETECT-only
+        // subagent/start audit below.
+        const malformed = unresolvableRecipientDecision(limits, channel);
+        auditContact(malformed, sender, '', 'tools_pre_execute', { tool: toolName });
+        if (malformed.blocked) {
+          return {
+            kind: 'deny' as const,
+            reason: `supreme-workflow-policy: inter-agent ${channel} recipient unresolvable (${A2A_RECIPIENT_UNRESOLVABLE_REASON})`,
+          };
+        }
+      } else if (target !== '') {
         const decision = evaluateAgentContact(limits, {
           from: sender,
           to: target,
-          channel: channelOf(toolName),
+          channel,
         });
         if (decision.flagged) {
           auditContact(decision, sender, target, 'tools_pre_execute', { tool: toolName });

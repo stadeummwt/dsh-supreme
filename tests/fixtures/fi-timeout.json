@@ -1,0 +1,24 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "timeout",
+  "description": "Injected provider TIMEOUT: the selected free provider stub never answers; each attempt is bounded by an attempt-timeout envelope, the failure is recorded on the REAL router circuit breaker, retries are bounded by the configured max, and the final posture is honest degradation (blocked decision, CIRCUIT_OPEN) with zero paid fallback dispatches.",
+  "providers": {
+    "primary": { "provider": "synthetic-hang", "model": "hang-mini", "costClass": "FREE_CONFIRMED", "failureDomain": "hang-domain", "quotaHeadroom": 0.9 },
+    "paid": { "provider": "synthetic-paid", "model": "paid-large", "costClass": "PAID", "failureDomain": "paid-domain", "quotaHeadroom": 0.9 }
+  },
+  "attempts": { "max": 3, "timeoutMs": 250, "wallClockCeilingMs": 20000 },
+  "expected": {
+    "initialDecisionProvider": "synthetic-hang",
+    "attemptsTaken": 3,
+    "dispatchedProvider": "synthetic-hang",
+    "paidDispatches": 0,
+    "everyAttemptTimedOut": true,
+    "danglingPendingCalls": 0,
+    "midFailureRouteProvider": "synthetic-hang",
+    "finalDecisionBlocked": "BLOCKED_NO_ELIGIBLE_ROUTE",
+    "finalCircuitState": "CIRCUIT_OPEN",
+    "finalCircuitRecentFailures": 3,
+    "paidCostGateFailed": true,
+    "paidCostGateGate": "policy_cost"
+  }
+}

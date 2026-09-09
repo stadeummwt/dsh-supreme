@@ -1,8 +1,8 @@
-// dsh-supreme/src/plugins/supreme-observability/index.ts
+// src/plugins/supreme-observability/index.ts
 import { z } from "zod";
 import { resolve } from "node:path";
 
-// dsh-supreme/src/plugins/supreme-observability/engine.ts
+// src/plugins/supreme-observability/engine.ts
 var RECORD_FIELDS = [
   "seq",
   "ts",
@@ -139,7 +139,7 @@ async function readRecent(path, count, fsImpl) {
   return out;
 }
 
-// dsh-supreme/src/plugins/supreme-observability/event-map.ts
+// src/plugins/supreme-observability/event-map.ts
 function classifyError(input) {
   if (input && typeof input === "object") {
     const rec = input;
@@ -156,7 +156,7 @@ function classifyError(input) {
   return "UNKNOWN";
 }
 
-// dsh-supreme/src/plugins/supreme-observability/index.ts
+// src/plugins/supreme-observability/index.ts
 var name = "supreme-observability";
 var inject = [];
 var Config = z.object({

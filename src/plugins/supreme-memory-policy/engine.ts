@@ -337,3 +337,208 @@ export function ledgerNotesToItems(notes: LedgerNote[]): MemoryItem[] {
     tags: n.tags,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// v1.3.1 — Session/task-scoped selection store (cross-session isolation, P1).
+//
+// The v1.3.0 adapter kept ONE `latestSelection` on the plugin instance, so the
+// renderer and any later reader observed whatever task selected last —
+// concurrent or successive sessions received each other's memory selections
+// (cross-session contamination found by the v1.3.0 external review).
+//
+// The store below binds every selection to the REAL identity pair
+// (sessionId, taskId) taken from the actual context/session objects:
+//   - sessionId comes from the pinned Agent/Session seam — the agent loop
+//     passes the live Agent into every prompt assembly
+//     (packages/core/agent/src/dispatch.ts:174 `assembleContextFor` →
+//     `{ agent, scope: agent }`; `Agent.session.id`/`Agent.id` are the durable
+//     branded SessionId strings, packages/core/agent/src/types.ts:14);
+//   - taskId is the caller-owned request/task identifier supplied together
+//     with the selection.
+//
+// Properties (all deterministic):
+//   BOUNDED    — LRU eviction at the configured cap (default 128 entries);
+//   FAIL-CLOSED— lookups with unknown/missing identity return nothing; there
+//                is NO "latest selection" fallback anywhere;
+//   RELEASED   — explicit releaseTask/releaseSession/releaseAll, the pinned
+//                `session/disposed` emit seam, and the plugin dispose effect
+//                all actually remove entries (verifiable via stats()).
+//
+// SHARED-KNOWLEDGE BOUNDARY: `config.projectKnowledge` is the ONLY
+// intentionally-shared namespace (SHARED_KNOWLEDGE_SCOPE = 'project'). It is
+// opt-in (the host must explicitly configure each entry) and identical for
+// every session BY DESIGN; it is never stored in this per-identity map — it
+// flows into a session's context only through that session's own select()
+// call. Task-specific selections never leave their (sessionId, taskId) key.
+// ---------------------------------------------------------------------------
+
+/** The intentionally-shared, opt-in project namespace (never per-task). */
+export const SHARED_KNOWLEDGE_SCOPE = 'project' as const;
+
+/** Default bounded LRU capacity for session/task-scoped selections. */
+export const DEFAULT_SELECTION_STORE_CAP = 128;
+
+/** Lower floor for the cap — keeps the store meaningful while bounded. */
+export const MIN_SELECTION_STORE_CAP = 8;
+
+/** Real identity pair a selection is owned by. Both parts are required. */
+export interface MemoryIdentity {
+  sessionId: string;
+  taskId: string;
+}
+
+/**
+ * Normalize one identity part: strings are trimmed; anything empty or
+ * non-string is NOT an identity (null) — callers must treat null as
+ * "unknown identity" and fail closed, never fall back to other state.
+ */
+export function normalizeIdentityText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Resolve the identity of a select/lookup input: BOTH parts must normalize.
+ * Missing, empty, or non-string parts ⇒ null (unknown identity).
+ */
+export function identityOf(input: { sessionId?: unknown; taskId?: unknown }): MemoryIdentity | null {
+  const sessionId = normalizeIdentityText(input.sessionId);
+  const taskId = normalizeIdentityText(input.taskId);
+  return sessionId !== null && taskId !== null ? { sessionId, taskId } : null;
+}
+
+/** Deterministic composite map key (NUL separator avoids concat ambiguity). */
+export function identityKey(identity: MemoryIdentity): string {
+  return `${identity.sessionId}\u0000${identity.taskId}`;
+}
+
+/** Clamp a configured cap into [MIN_SELECTION_STORE_CAP, ∞) deterministically. */
+export function clampSelectionStoreCap(cap: number | undefined): number {
+  if (typeof cap !== 'number' || !Number.isFinite(cap)) return DEFAULT_SELECTION_STORE_CAP;
+  return Math.max(MIN_SELECTION_STORE_CAP, Math.floor(cap));
+}
+
+/** Ids/counts only — never selection content. Safe for audit serialization. */
+export interface SelectionStoreStats {
+  capacity: number;
+  entries: number;
+  activeTasks: number;
+  evictions: number;
+}
+
+interface SelectionEntry {
+  identity: MemoryIdentity;
+  selection: MemorySelection;
+}
+
+/**
+ * Bounded LRU map of (sessionId, taskId) → MemorySelection, plus the
+ * per-session ACTIVE-task pointer the renderer needs.
+ *
+ * Why an active-task pointer: the pinned system-prompt assembly context
+ * (`AssembleContext`) carries the agent (⇒ session id) but NO task id, so the
+ * renderer binds to the session's active task — a pointer that is set ONLY by
+ * that same session's own scoped select() call and cleared by release APIs.
+ * A session with no active task renders nothing (fail-closed). Releasing the
+ * active task does NOT resurrect an older selection of the same session —
+ * that would be the exact "previous selection" fallback this store removes.
+ *
+ * Both internal maps are bounded by the same LRU cap; evictions are counted.
+ */
+export class SelectionStore {
+  private readonly capacity: number;
+  /** insertion order = LRU order (Map semantics); touch = delete + re-set. */
+  private readonly entries = new Map<string, SelectionEntry>();
+  private readonly activeTask = new Map<string, string>();
+  private evictions = 0;
+
+  constructor(capacity: number = DEFAULT_SELECTION_STORE_CAP) {
+    // Raw MECHANICAL capacity: any finite number ≥ 1 is honored (floored) so
+    // the LRU mechanics are exercisable at small caps; anything else falls
+    // back to the documented default. Host/adapter CONFIG values must be
+    // clamped through clampSelectionStoreCap() (floor MIN_SELECTION_STORE_CAP)
+    // BEFORE construction — the adapter does exactly that.
+    this.capacity =
+      typeof capacity === 'number' && Number.isFinite(capacity) && capacity >= 1
+        ? Math.floor(capacity)
+        : DEFAULT_SELECTION_STORE_CAP;
+  }
+
+  /** Store a selection for an identity and mark it the session's active task. */
+  record(identity: MemoryIdentity, selection: MemorySelection): void {
+    const key = identityKey(identity);
+    this.entries.delete(key);
+    this.entries.set(key, { identity, selection });
+    while (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+      this.evictions += 1;
+    }
+    this.activeTask.delete(identity.sessionId);
+    this.activeTask.set(identity.sessionId, identity.taskId);
+    while (this.activeTask.size > this.capacity) {
+      const oldest = this.activeTask.keys().next();
+      if (oldest.done) break;
+      this.activeTask.delete(oldest.value);
+      this.evictions += 1;
+    }
+  }
+
+  /** Exact-identity lookup (LRU refresh). Collision-checked via stored identity. */
+  get(identity: MemoryIdentity): MemorySelection | undefined {
+    const key = identityKey(identity);
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    if (entry.identity.sessionId !== identity.sessionId || entry.identity.taskId !== identity.taskId) {
+      return undefined; // key collision (pathological ids) ⇒ fail closed
+    }
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.selection;
+  }
+
+  /** The active task id of a session, or undefined when the session has none. */
+  activeTaskOf(sessionId: string): string | undefined {
+    const taskId = this.activeTask.get(sessionId);
+    if (taskId === undefined) return undefined;
+    this.activeTask.delete(sessionId);
+    this.activeTask.set(sessionId, taskId);
+    return taskId;
+  }
+
+  /** Release one task's selection. Clears the active pointer only if it points at this task. */
+  releaseTask(identity: MemoryIdentity): boolean {
+    const removed = this.entries.delete(identityKey(identity));
+    const active = this.activeTask.get(identity.sessionId);
+    if (active === identity.taskId) this.activeTask.delete(identity.sessionId);
+    return removed;
+  }
+
+  /** Release EVERYTHING owned by one session. Returns the number of entries removed. */
+  releaseSession(sessionId: string): number {
+    let removed = 0;
+    for (const [key, entry] of this.entries) {
+      if (entry.identity.sessionId === sessionId) {
+        this.entries.delete(key);
+        removed += 1;
+      }
+    }
+    this.activeTask.delete(sessionId);
+    return removed;
+  }
+
+  /** Release everything (plugin dispose). Returns the number of entries removed. */
+  clear(): number {
+    const removed = this.entries.size;
+    this.entries.clear();
+    this.activeTask.clear();
+    return removed;
+  }
+
+  /** Internal-state accessor: ids/counts only, for gates and honest assertions. */
+  stats(): SelectionStoreStats {
+    return { capacity: this.capacity, entries: this.entries.size, activeTasks: this.activeTask.size, evictions: this.evictions };
+  }
+}

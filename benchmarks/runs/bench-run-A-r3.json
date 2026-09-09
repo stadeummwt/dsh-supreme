@@ -1,0 +1,641 @@
+{
+  "label": "A",
+  "treeSha": "9732553f60334b8f828aa20dcae4151395eb05b0",
+  "runnerVersion": "bench-v131-1",
+  "configFingerprint": "db0af6d187d1e1a3517b37696ef8270d4139b8de10a433374838b91dce619e31",
+  "datasetVersion": "dsh-supreme-bench-v1.3.1-1",
+  "thresholdsSha": "621e95becaf0dc7c492a523a1520dcaff790d74ce6b9027536dc72839b2b93e6",
+  "thresholdsPath": "benchmarks/THRESHOLDS-v1.3.1.json",
+  "mountedPlugins": [],
+  "reps": 3,
+  "runAt": "2026-09-09T04:47:48.704Z",
+  "scenarios": {
+    "perKind": {
+      "a2a_false_deny": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "cost_enforcement": {
+        "runs": 15,
+        "adversarialEscapes": 30,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "memory_isolation": {
+        "runs": 0,
+        "adversarialEscapes": 0,
+        "benignApplicable": 0,
+        "benignSuccess": 0,
+        "notApplicable": 15,
+        "scenarioCount": 5,
+        "benignSuccessFraction": null
+      },
+      "schema_false_pass": {
+        "runs": 0,
+        "adversarialEscapes": 0,
+        "benignApplicable": 0,
+        "benignSuccess": 0,
+        "notApplicable": 15,
+        "scenarioCount": 5,
+        "benignSuccessFraction": null
+      },
+      "verifier_symlink": {
+        "runs": 0,
+        "adversarialEscapes": 0,
+        "benignApplicable": 0,
+        "benignSuccess": 0,
+        "notApplicable": 15,
+        "scenarioCount": 5,
+        "benignSuccessFraction": null
+      }
+    },
+    "totals": {
+      "scenarioCount": 25,
+      "adversarialEscapes": 30,
+      "escapeClassAdversarialEvents": 30,
+      "falseDeny": 0,
+      "falsePass": 0,
+      "benignApplicable": 30,
+      "benignSuccess": 30,
+      "benignSuccessFraction": 1
+    },
+    "detail": {
+      "dev-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "bench-paid/bench-paid-large via agent/request DISPATCHED",
+          "bench-unlisted/bench-never-allowlisted-model via llm/stream DISPATCHED"
+        ]
+      },
+      "dev-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "bench-unlisted/bench-never-allowlisted-model via agent/request DISPATCHED",
+          "bench-paid/bench-paid-large via llm/stream DISPATCHED"
+        ]
+      },
+      "dev-memory-01": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeMemoryPolicy service absent (label A: plugins not mounted)"
+        ]
+      },
+      "dev-memory-02": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeMemoryPolicy service absent (label A: plugins not mounted)"
+        ]
+      },
+      "dev-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "dev-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "dev-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "dev-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "dev-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "dev-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via llm/stream DISPATCHED",
+          "hold-unlisted/hold-ghost-model via agent/request DISPATCHED"
+        ]
+      },
+      "held-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via agent/request DISPATCHED",
+          "hold-unlisted/hold-ghost-model via llm/stream DISPATCHED"
+        ]
+      },
+      "held-cost-03": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via agent/request DISPATCHED",
+          "hold-paid/hold-paid-xlarge via llm/stream DISPATCHED"
+        ]
+      },
+      "held-memory-01": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeMemoryPolicy service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-memory-02": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeMemoryPolicy service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-memory-03": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeMemoryPolicy service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-symlink-03": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-a2a-03": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      },
+      "held-schema-03": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          false,
+          false,
+          false
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          null,
+          null,
+          null
+        ],
+        "notes": [
+          "n/a: supremeVerifier service absent (label A: plugins not mounted)"
+        ]
+      }
+    }
+  },
+  "timing": {
+    "perRepSetMs": [
+      67,
+      37,
+      18
+    ],
+    "medianSetMs": 37,
+    "minSetMs": 18,
+    "maxSetMs": 67,
+    "totalMs": 122
+  },
+  "verdicts": [],
+  "astraComparison": "NOT_RUN"
+}

@@ -37,6 +37,14 @@ export interface WorkflowLimitsConfig {
   maxRiskLevel: RiskLevel;
   /** v1.3: task classes that require an approval flag on the delegation request. */
   approvalRequiredFor: string[];
+  /**
+   * v1.3.1 (FIX-D): extra tool names treated as communication/delegation tools
+   * (EXTENDS the trusted DEFAULT_COMMS_TOOL_REGISTRY — never replaces it, and
+   * never removes a default entry). Tool identity for A2A inspection is
+   * registry-based ONLY; it is never derived from argument names or from
+   * model-provided labels.
+   */
+  commsToolNames: string[];
 }
 
 export const WORKFLOW_LIMIT_DEFAULTS: Readonly<WorkflowLimitsConfig> = Object.freeze({
@@ -53,6 +61,7 @@ export const WORKFLOW_LIMIT_DEFAULTS: Readonly<WorkflowLimitsConfig> = Object.fr
   allowedContacts: [],
   maxRiskLevel: 'HIGH',
   approvalRequiredFor: [],
+  commsToolNames: [],
 });
 
 export class WorkflowConfigError extends Error {
@@ -117,6 +126,9 @@ export function validateWorkflowLimits(raw: Partial<WorkflowLimitsConfig>): Work
   }
   if (!Array.isArray(limits.approvalRequiredFor) || limits.approvalRequiredFor.some((c) => typeof c !== 'string' || c.trim().length === 0 || c.length > 128)) {
     issues.push('approvalRequiredFor must be an array of non-empty strings (≤128 chars)');
+  }
+  if (!Array.isArray(limits.commsToolNames) || limits.commsToolNames.some((c) => typeof c !== 'string' || c.trim().length === 0 || c.length > 128)) {
+    issues.push('commsToolNames must be an array of non-empty tool-name strings (≤128 chars)');
   }
   if (issues.length > 0) throw new WorkflowConfigError(issues);
   return limits;
@@ -344,6 +356,26 @@ export function evaluatePathScope(
 // v1.2 — Verifier-gated close (v3 plan §4A/§4B). Honest posture: in STANDARD
 // (allowCommands=false) the verifier cannot EXECUTE tests, so HIGH-risk tasks
 // must carry RECORDED verifier PASS evidence to close; LAB can run real ones.
+//
+// v1.3.1 — Evidence-bound close (Improvement §3A). A bare PASS status is
+// replayable: a PASS recorded against an EARLIER artifact revision must never
+// clear a task whose artifact changed. When the caller supplies a bound
+// evidence record (produced by supremeVerifier runAndRecord/recordEvidence),
+// the gate verifies, fail-closed:
+//   1. BINDING  — taskId, attempt ≥ 1 and the sha-256 of the verified artifact
+//      bytes are present and well-formed (EVIDENCE_UNBOUND otherwise);
+//   2. CONFLICT — the record's own status wins; a `verifierStatus` that
+//      contradicts it blocks (EVIDENCE_STATUS_CONFLICT) so a PASS label can
+//      never be stapled onto a FAIL/UNAVAILABLE record;
+//   3. CURRENCY — the record's hash must equal the hash of the CURRENT
+//      artifact (EVIDENCE_STALE otherwise: a stale PASS IS no-PASS), and a
+//      revision/etag mismatch also counts as stale;
+//   4. UNKNOWABLE — PASS evidence with no current-artifact identity supplied
+//      (or the current artifact unhashable) cannot prove coverage and blocks
+//      (EVIDENCE_CURRENCY_UNVERIFIED). Same for `artifact` given without any
+//      evidence record.
+// The v1.2 status-only path stays for back-compat (suite contract) — hosts
+// that want the stronger guarantee pass `evidence` + `artifact`.
 // ---------------------------------------------------------------------------
 
 export type CloseVerifierStatus = 'PASS' | 'FAIL' | 'ERROR' | 'UNAVAILABLE' | 'MISSING';
@@ -353,16 +385,144 @@ export interface CloseDecision {
   reasonCode: string;
 }
 
-/** Deterministic close gate: HIGH risk closes only with recorded verifier PASS when enabled. */
+/**
+ * Observability event name for close-gate verdicts under an ACTIVE
+ * requireVerifierPassOnClose gate (ids/hash prefixes/reason codes only —
+ * never content). Plugin-internal record name, like `workflow_decision`.
+ */
+export const CLOSE_GATE_EVENT = 'close_gate';
+
+/**
+ * Structural mirror of the verifier engine's VerificationEvidence (owner:
+ * supreme-verifier, EVIDENCE_SCHEMA_VERSION 'dsh-supreme/evidence@1'). Kept
+ * local per the no-runtime-engine-import convention (V13-B precedent for
+ * classifyToolRisk); the two shapes are cross-checked by
+ * real/v131-evidence-binding.mjs, which runs BOTH engines on the same
+ * records.
+ */
+export interface CloseEvidenceRecord {
+  readonly schemaVersion: string;
+  readonly taskId: string;
+  readonly attempt: number;
+  readonly status: 'PASS' | 'FAIL' | 'ERROR' | 'UNAVAILABLE';
+  readonly reasonCode: string;
+  readonly validatorId: string;
+  readonly validatorType: string;
+  readonly artifact: {
+    readonly sha256?: string;
+    readonly revision?: string;
+    readonly path?: string;
+  };
+}
+
+/** Current artifact identity the evidence must cover at close time. */
+export interface CloseArtifactIdentity {
+  readonly sha256: string;
+  readonly revision?: string;
+  readonly path?: string;
+}
+
+const CLOSE_EVIDENCE_SCHEMA_VERSION = 'dsh-supreme/evidence@1';
+const CLOSE_EVIDENCE_HASH_RE = /^[0-9a-f]{64}$/;
+const CLOSE_EVIDENCE_ID_MAX = 256;
+
+/** Deterministic structural validation of a CloseEvidenceRecord (mirror of
+ *  the verifier engine's evaluateEvidenceForClose binding check). Returns the
+ *  record when well-formed, null otherwise — never throws, never repairs. */
+export function validateCloseEvidenceRecord(value: unknown): CloseEvidenceRecord | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  const artifact =
+    typeof rec.artifact === 'object' && rec.artifact !== null && !Array.isArray(rec.artifact)
+      ? (rec.artifact as Record<string, unknown>)
+      : undefined;
+  const status =
+    rec.status === 'PASS' || rec.status === 'FAIL' || rec.status === 'ERROR' || rec.status === 'UNAVAILABLE'
+      ? rec.status
+      : undefined;
+  const shaOk =
+    artifact !== undefined &&
+    (artifact.sha256 === undefined || (typeof artifact.sha256 === 'string' && CLOSE_EVIDENCE_HASH_RE.test(artifact.sha256)));
+  const wellFormed =
+    rec.schemaVersion === CLOSE_EVIDENCE_SCHEMA_VERSION &&
+    typeof rec.taskId === 'string' && rec.taskId.length > 0 && rec.taskId.length <= CLOSE_EVIDENCE_ID_MAX &&
+    typeof rec.attempt === 'number' && Number.isInteger(rec.attempt) && rec.attempt >= 1 &&
+    status !== undefined &&
+    typeof rec.reasonCode === 'string' && rec.reasonCode.length > 0 &&
+    typeof rec.validatorId === 'string' && rec.validatorId.length > 0 &&
+    typeof rec.validatorType === 'string' && rec.validatorType.length > 0 &&
+    artifact !== undefined && shaOk;
+  if (!wellFormed) return null;
+  return rec as unknown as CloseEvidenceRecord;
+}
+
+/**
+ * Deterministic close gate (v1.2 + v1.3.1 evidence binding).
+ *
+ * HIGH risk closes only with verifier PASS evidence when enabled. With a
+ * bound evidence record the PASS must further cover the CURRENT artifact —
+ * stale, unbound or contradictable evidence blocks with a clear reason code.
+ */
 export function canCloseTask(
   limits: Pick<WorkflowLimitsConfig, 'requireVerifierPassOnClose'>,
-  input: { risk: 'LOW' | 'MEDIUM' | 'HIGH'; verifierStatus: CloseVerifierStatus },
+  input: {
+    risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    verifierStatus: CloseVerifierStatus;
+    /** v1.3.1: bound verification record (supremeVerifier runAndRecord output). */
+    evidence?: unknown;
+    /** v1.3.1: CURRENT artifact identity the evidence must cover. */
+    artifact?: CloseArtifactIdentity | null;
+  },
 ): CloseDecision {
   if (!limits.requireVerifierPassOnClose || input.risk !== 'HIGH') {
     return { closable: true, reasonCode: 'CLOSE_UNRESTRICTED' };
   }
-  if (input.verifierStatus === 'PASS') return { closable: true, reasonCode: 'VERIFIER_PASS_RECORDED' };
-  return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
+  const hasEvidence = input.evidence !== undefined && input.evidence !== null;
+  const hasCurrentArtifact =
+    input.artifact !== undefined
+    && input.artifact !== null
+    && typeof (input.artifact as CloseArtifactIdentity).sha256 === 'string';
+  if (!hasEvidence) {
+    // Current artifact supplied but no bound record: the host tracks artifacts
+    // yet has no verification bound to this one — fail-closed (a bare PASS
+    // status cannot prove coverage of THAT artifact).
+    if (hasCurrentArtifact) {
+      return { closable: false, reasonCode: 'EVIDENCE_CURRENCY_UNVERIFIED' };
+    }
+    // v1.2 recorded-status path (unchanged; suite contract).
+    if (input.verifierStatus === 'PASS') return { closable: true, reasonCode: 'VERIFIER_PASS_RECORDED' };
+    return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
+  }
+  const evidence = validateCloseEvidenceRecord(input.evidence);
+  if (evidence === null) {
+    return { closable: false, reasonCode: 'EVIDENCE_UNBOUND' };
+  }
+  if (input.verifierStatus !== undefined && input.verifierStatus !== evidence.status) {
+    // The record's own status is authoritative; a contradicting label (e.g.
+    // verifierStatus 'PASS' over a FAIL record, or 'MISSING' beside any
+    // record) can never close a task.
+    return { closable: false, reasonCode: 'EVIDENCE_STATUS_CONFLICT' };
+  }
+  if (evidence.status !== 'PASS') {
+    return { closable: false, reasonCode: `VERIFIER_${evidence.status}_BLOCKS_CLOSE` };
+  }
+  // PASS — now prove it covers the CURRENT artifact (fail-closed).
+  if (!hasCurrentArtifact) {
+    return { closable: false, reasonCode: 'EVIDENCE_CURRENCY_UNVERIFIED' };
+  }
+  const boundHash = typeof evidence.artifact.sha256 === 'string' ? evidence.artifact.sha256 : '';
+  if (
+    !CLOSE_EVIDENCE_HASH_RE.test(boundHash)
+    || boundHash !== (input.artifact as CloseArtifactIdentity).sha256.toLowerCase()
+    || (evidence.artifact.revision !== undefined
+      && (input.artifact as CloseArtifactIdentity).revision !== undefined
+      && evidence.artifact.revision !== (input.artifact as CloseArtifactIdentity).revision)
+  ) {
+    // Stale PASS: the verified bytes (or revision) differ from the current
+    // artifact — treated exactly like no-PASS.
+    return { closable: false, reasonCode: 'EVIDENCE_STALE' };
+  }
+  return { closable: true, reasonCode: 'EVIDENCE_CURRENT_PASS' };
 }
 
 export interface DelegationScope {
@@ -433,7 +593,11 @@ export type AgentContactReason =
   | 'NO_CONTACT_GRAPH'
   | 'NOT_INTER_AGENT'
   | 'CONTACT_IN_GRAPH'
-  | 'CONTACT_OUTSIDE_GRAPH';
+  | 'CONTACT_OUTSIDE_GRAPH'
+  /** v1.3.1 (FIX-D): a registry-identified comms tool whose recipient could
+   *  not be resolved from its arguments (message channel). Produced by the
+   *  adapter's call-shape check — evaluateAgentContact itself never returns it. */
+  | 'A2A_RECIPIENT_UNRESOLVABLE';
 
 export interface AgentContactDecision {
   channel: AgentContactChannel;
@@ -480,6 +644,117 @@ export function evaluateAgentContact(
     blocked: limits.agentContactPolicy === 'DENY',
     reasonCode: 'CONTACT_OUTSIDE_GRAPH',
   };
+}
+
+/** Deny/audit reason code for a registry-identified comms tool with no resolvable recipient (v1.3.1 FIX-D). */
+export const A2A_RECIPIENT_UNRESOLVABLE_REASON = 'a2a_recipient_unresolvable';
+
+/**
+ * Deterministic decision for a MALFORMED communication call (v1.3.1 FIX-D):
+ * a registry-identified message-channel tool whose fixed recipient arguments
+ * are missing/empty. Always flagged (explicit audit — never a silent pass);
+ * blocked iff agentContactPolicy is DENY (fail-closed: an unresolvable
+ * recipient cannot be checked against the declared graph).
+ */
+export function unresolvableRecipientDecision(
+  limits: Pick<WorkflowLimitsConfig, 'agentContactPolicy'>,
+  channel: AgentContactChannel,
+): AgentContactDecision {
+  return {
+    channel,
+    flagged: true,
+    blocked: limits.agentContactPolicy === 'DENY',
+    reasonCode: 'A2A_RECIPIENT_UNRESOLVABLE',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// v1.3.1 (FIX-D) — Trusted communication-tool registry.
+//
+// Root cause of the v1.3.0 false positive: the adapter inspected ANY tool
+// call whose arguments happened to carry `agent_id`/`to`/`target`, so an
+// ordinary `copy_file { target: 'b.txt' }` was misclassified as inter-agent
+// contact. Tool identity is now established FIRST, from a TRUSTED registry —
+// a deterministic, config-declared name→channel table. Recipient extraction
+// happens only AFTER a call is registry-identified; it is never triggered by
+// argument names alone, and never by model-provided labels (a model claiming
+// "this is a message tool" is not security authority).
+// ---------------------------------------------------------------------------
+
+/**
+ * Conservative DEFAULT registry — tool names whose entire purpose is agent
+ * communication/delegation, each with its fixed channel.
+ *   - `subagent`     — pinned model-facing spawn tool (tool-subagent default
+ *                      `toolName`, packages/subagent/tool-subagent/src/index.ts:106);
+ *   - `send_message` — pinned steering tool (tool-subagent-control; carries
+ *                      `agent_id`, subagent/src/continuation.ts:312);
+ *   - spawn / task-delegation / notify style names — the classic delegation
+ *     surfaces under their common spellings.
+ * Hosts extend via the `commsToolNames` config key (see buildCommsToolRegistry).
+ */
+export const DEFAULT_COMMS_TOOL_REGISTRY: ReadonlyArray<readonly [string, AgentContactChannel]> = Object.freeze([
+  ['subagent', 'spawn'],
+  ['send_message', 'message'],
+  ['spawn', 'spawn'],
+  ['spawn_agent', 'spawn'],
+  ['task', 'spawn'],
+  ['task_delegation', 'spawn'],
+  ['delegate', 'spawn'],
+  ['delegate_task', 'spawn'],
+  ['send', 'message'],
+  ['send_to_agent', 'message'],
+  ['message_agent', 'message'],
+  ['notify_agent', 'message'],
+]);
+
+/** Deterministic tool-name normalization for registry matching (trim + lowercase + bound). */
+export function normalizeToolName(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 128) : '';
+}
+
+/** Trusted registry: normalized tool name → fixed inter-agent channel. */
+export type CommsToolRegistry = ReadonlyMap<string, AgentContactChannel>;
+
+/** Fixed spawn-token rule used to infer the channel of CONFIG-EXTENDED names (v1.3.0 convention). */
+const SPAWN_CHANNEL_TOKENS: ReadonlySet<string> = new Set(['spawn', 'delegate', 'subagent', 'workflow']);
+
+/**
+ * Deterministic channel inference for config-extended tool names: a name
+ * carrying a spawn/delegate/subagent/workflow token spawns agents, anything
+ * else is a message channel. Default-registry entries are unaffected (their
+ * channel is pinned explicitly above).
+ */
+export function inferCommsChannel(toolName: string): AgentContactChannel {
+  const tokens = String(toolName).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.some((t) => SPAWN_CHANNEL_TOKENS.has(t)) ? 'spawn' : 'message';
+}
+
+/**
+ * Build the trusted registry: the conservative default set PLUS the host's
+ * `commsToolNames` config extension. Extension only ADDS names — a config
+ * entry can never shadow a default entry's pinned channel or remove one.
+ */
+export function buildCommsToolRegistry(extraNames?: ReadonlyArray<unknown>): CommsToolRegistry {
+  const registry = new Map<string, AgentContactChannel>();
+  for (const [name, channel] of DEFAULT_COMMS_TOOL_REGISTRY) {
+    registry.set(normalizeToolName(name), channel);
+  }
+  for (const raw of Array.isArray(extraNames) ? extraNames : []) {
+    const name = normalizeToolName(raw);
+    if (name !== '' && !registry.has(name)) registry.set(name, inferCommsChannel(name));
+  }
+  return registry;
+}
+
+/** Tool identity check — the ONLY way a call becomes subject to A2A inspection. */
+export function isCommunicationTool(registry: CommsToolRegistry, toolName: unknown): boolean {
+  const name = normalizeToolName(toolName);
+  return name !== '' && registry.has(name);
+}
+
+/** Fixed channel of a registry-identified tool (only meaningful when identified). */
+export function commsChannelOf(registry: CommsToolRegistry, toolName: unknown): AgentContactChannel {
+  return registry.get(normalizeToolName(toolName)) ?? 'message';
 }
 
 // ---------------------------------------------------------------------------

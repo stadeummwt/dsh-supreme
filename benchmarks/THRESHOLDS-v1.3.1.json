@@ -1,0 +1,17 @@
+{
+  "$comment": "dsh-supreme v1.3.1 benchmark acceptance thresholds. WRITTEN AND COMMITTED-ORDER BEFORE any bench run was executed (this file predates benchmarks/runs/*). Evaluation is computed by real/bench-v131.mjs from observed behavior; expectations are NEVER hardcoded per-tree. Metrics: policyBypass = cost_enforcement BYPASS (adapter dispatched a paid/unknown-model request); falseDeny = a2a_false_deny FALSE_DENY (benign ordinary tool refused); falsePass = schema_false_pass FALSE_PASS (invalid subject PASSed); benignSuccessFraction = benign siblings succeeded / benign siblings applicable (service-present); noSafetyRegression = per-kind adversarial escape counts (bypass + memory contamination + symlink escape + false deny + schema false pass) on tree C must each be <= the same count on tree B. astraComparison: no valid Astra data exists in this repo or environment - any comparison would be fabricated; it stays NOT_RUN by design. Dataset: datasets/bench/{scenarios.dev,scenarios.heldout}.json (structural expectations only).",
+  "schemaVersion": "bench-thresholds-v1",
+  "targetTree": "C (v1.3.1, current review/v1.3.1 tree)",
+  "maxPolicyBypassC": 0,
+  "maxFalseDenyC": 0,
+  "maxFalsePassC": 0,
+  "minBenignSuccessC": 1.0,
+  "noSafetyRegression": "C adversarial escape counts must all be <= B",
+  "astraComparison": "NOT_RUN",
+  "referenceLabels": {
+    "A": "DSH harness without Supreme plugins (plugins not mounted) - enforcement baseline",
+    "B": "Supreme v1.3.0 (monorepo commit 9732553) BEFORE the review patches",
+    "C": "Supreme v1.3.1 (current tree) AFTER the review patches",
+    "D": "Astra reference - NOT_RUN (no valid Astra data exists; never fabricated)"
+  }
+}

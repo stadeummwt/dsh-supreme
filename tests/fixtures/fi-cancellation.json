@@ -1,0 +1,39 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "cancellation",
+  "description": "Injected CANCELLATION mid-flight: a memory selection is held and a workflow delegation decision is live when a session is cancelled (releaseTask) and then disposed (pinned session/disposed emit, then a REAL fiber dispose). Selection state must be released exactly, the surviving session must be untouched by the cancelled session's cleanup, lookups must stay empty afterwards (no resurrection, no cross-session contamination), and the fiber dispose must complete within the ceiling with no dangling state.",
+  "sessions": {
+    "cancelled": {
+      "id": "session-cancel",
+      "task": { "id": "task-cancel-1", "taskText": "summarize incident notes V131FI_CANARY_PROMPT_7f3a alpha-marker" }
+    },
+    "survivor": {
+      "id": "session-keep",
+      "task": { "id": "task-keep-1", "taskText": "summarize incident notes V131FI_CANARY_PROMPT_7f3a beta-marker" }
+    }
+  },
+  "delegation": {
+    "taskClass": "ROUTINE",
+    "requestedTools": ["subagent"],
+    "requestedPaths": ["reports/**"],
+    "riskLevel": "LOW",
+    "approvalGranted": true
+  },
+  "disposeCeilingMs": 5000,
+  "expected": {
+    "delegationOverreach": false,
+    "cancelReleasedTask": true,
+    "cancelledLookupNullAfterCancel": true,
+    "cancelledRenderEmptyAfterCancel": true,
+    "survivorLookupKeptAfterCancel": true,
+    "survivorRenderKeptAfterCancel": true,
+    "repeatReleaseReturnsFalse": true,
+    "sessionDisposeReleased": 1,
+    "survivorLookupNullAfterSessionDispose": true,
+    "storeEntriesAfterSessionDispose": 0,
+    "disposeCompletes": true,
+    "postDisposeStoreEntries": 0,
+    "postDisposeLookupsEmpty": true,
+    "postDisposeRenderEmpty": true
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "provider-unavailable",
+  "description": "Injected PROVIDER UNAVAILABLE: the first free provider stub throws an unavailable error on every dispatch; the REAL router circuit breaker records failures and transitions HEALTHY -> DEGRADED -> CIRCUIT_OPEN, the failed route becomes ineligible while the benign sibling free provider stays routable (selection AND an actual successful dispatch), and removing the provider from the live catalog is independently gated.",
+  "candidates": [
+    { "provider": "synthetic-down", "model": "down-mini", "costClass": "FREE_CONFIRMED", "failureDomain": "down-domain", "quotaHeadroom": 0.99 },
+    { "provider": "synthetic-benign", "model": "benign-mini", "costClass": "FREE_CONFIRMED", "failureDomain": "benign-domain", "quotaHeadroom": 0.5 }
+  ],
+  "threshold": 3,
+  "errorKind": "PROVIDER_UNAVAILABLE",
+  "expected": {
+    "initialDecisionProvider": "synthetic-down",
+    "healthAfterEachFailure": ["DEGRADED", "DEGRADED", "CIRCUIT_OPEN"],
+    "finalCircuitState": "CIRCUIT_OPEN",
+    "afterFailuresDecisionProvider": "synthetic-benign",
+    "downRouteFailedGate": "health_ok",
+    "benignDispatchChunks": 3,
+    "catalogRemovedFailedGate": "provider_available",
+    "benignStillRoutableAfterCatalogRemoval": true
+  }
+}

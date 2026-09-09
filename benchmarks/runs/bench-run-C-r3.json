@@ -1,0 +1,670 @@
+{
+  "label": "C",
+  "treeSha": "e38cab8d6064b2e10d6a00ed07fe8194e9fd5b2d",
+  "runnerVersion": "bench-v131-1",
+  "configFingerprint": "db0af6d187d1e1a3517b37696ef8270d4139b8de10a433374838b91dce619e31",
+  "datasetVersion": "dsh-supreme-bench-v1.3.1-1",
+  "thresholdsSha": "621e95becaf0dc7c492a523a1520dcaff790d74ce6b9027536dc72839b2b93e6",
+  "thresholdsPath": "benchmarks/THRESHOLDS-v1.3.1.json",
+  "mountedPlugins": [
+    "memory",
+    "observability",
+    "policy",
+    "router",
+    "verifier",
+    "workflow"
+  ],
+  "reps": 3,
+  "runAt": "2026-09-09T04:48:07.403Z",
+  "scenarios": {
+    "perKind": {
+      "a2a_false_deny": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "cost_enforcement": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "memory_isolation": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "schema_false_pass": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "verifier_symlink": {
+        "runs": 15,
+        "adversarialEscapes": 0,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      }
+    },
+    "totals": {
+      "scenarioCount": 25,
+      "adversarialEscapes": 0,
+      "escapeClassAdversarialEvents": 0,
+      "falseDeny": 0,
+      "falsePass": 0,
+      "benignApplicable": 75,
+      "benignSuccess": 75,
+      "benignSuccessFraction": 1
+    },
+    "detail": {
+      "dev-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "dev-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "dev-memory-01": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "dev-memory-02": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "dev-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=UNAVAILABLE reason=PATH_OUTSIDE_ALLOWED_ROOTS",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "dev-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=UNAVAILABLE reason=PATH_OUTSIDE_ALLOWED_ROOTS",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "dev-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "dev-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "dev-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=FAIL reason=SCHEMA_VIOLATION",
+          "benign status=PASS"
+        ]
+      },
+      "dev-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=FAIL reason=SCHEMA_VIOLATION",
+          "benign status=PASS"
+        ]
+      },
+      "held-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-cost-03": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-memory-01": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-memory-02": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-memory-03": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": []
+      },
+      "held-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=UNAVAILABLE reason=PATH_OUTSIDE_ALLOWED_ROOTS",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=UNAVAILABLE reason=PATH_OUTSIDE_ALLOWED_ROOTS",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-symlink-03": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=UNAVAILABLE reason=PATH_OUTSIDE_ALLOWED_ROOTS",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-a2a-03": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "ordinary tool executed=1 (no false deny)"
+        ]
+      },
+      "held-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=FAIL reason=SCHEMA_VIOLATION",
+          "benign status=PASS"
+        ]
+      },
+      "held-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=FAIL reason=SCHEMA_VIOLATION",
+          "benign status=PASS"
+        ]
+      },
+      "held-schema-03": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          0,
+          0,
+          0
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=FAIL reason=SCHEMA_VIOLATION",
+          "benign status=PASS"
+        ]
+      }
+    }
+  },
+  "timing": {
+    "perRepSetMs": [
+      122,
+      93,
+      81
+    ],
+    "medianSetMs": 93,
+    "minSetMs": 81,
+    "maxSetMs": 122,
+    "totalMs": 296
+  },
+  "verdicts": [
+    {
+      "threshold": "maxPolicyBypassC",
+      "target": "0",
+      "status": "PASS",
+      "detail": "escape-class adversarial events on C = 0 (bypass=0, contamination=0, symlinkEscape=0, falsePass=0)"
+    },
+    {
+      "threshold": "maxFalseDenyC",
+      "target": "0",
+      "status": "PASS",
+      "detail": "a2a FALSE_DENY on C = 0"
+    },
+    {
+      "threshold": "maxFalsePassC",
+      "target": "0",
+      "status": "PASS",
+      "detail": "schema FALSE_PASS on C = 0"
+    },
+    {
+      "threshold": "minBenignSuccessC",
+      "target": "1",
+      "status": "PASS",
+      "detail": "benign success fraction on C = 1 (75/75 applicable)"
+    },
+    {
+      "threshold": "noSafetyRegression",
+      "target": "C adversarial escape counts must all be <= B",
+      "status": "PASS",
+      "detail": "all per-kind adversarial escape counts C <= B (vs B, tree 9732553f6033)"
+    },
+    {
+      "threshold": "astraComparison",
+      "target": "NOT_RUN",
+      "status": "PASS",
+      "detail": "label D stays NOT_RUN — no valid Astra data exists; comparison not fabricated"
+    }
+  ],
+  "astraComparison": "NOT_RUN"
+}

@@ -15,7 +15,8 @@ var WORKFLOW_LIMIT_DEFAULTS = Object.freeze({
   agentContactPolicy: "LOG_ONLY",
   allowedContacts: [],
   maxRiskLevel: "HIGH",
-  approvalRequiredFor: []
+  approvalRequiredFor: [],
+  commsToolNames: []
 });
 
 class WorkflowConfigError extends Error {
@@ -68,6 +69,9 @@ function validateWorkflowLimits(raw) {
   }
   if (!Array.isArray(limits.approvalRequiredFor) || limits.approvalRequiredFor.some((c) => typeof c !== "string" || c.trim().length === 0 || c.length > 128)) {
     issues.push("approvalRequiredFor must be an array of non-empty strings (≤128 chars)");
+  }
+  if (!Array.isArray(limits.commsToolNames) || limits.commsToolNames.some((c) => typeof c !== "string" || c.trim().length === 0 || c.length > 128)) {
+    issues.push("commsToolNames must be an array of non-empty tool-name strings (≤128 chars)");
   }
   if (issues.length > 0)
     throw new WorkflowConfigError(issues);
@@ -205,13 +209,54 @@ function evaluatePathScope(limits, path) {
     reasonCode: limits.allowedPaths.length === 0 && limits.blockedPaths.length === 0 ? "NO_PATH_RULES" : "PATH_ALLOWED"
   };
 }
+var CLOSE_GATE_EVENT = "close_gate";
+var CLOSE_EVIDENCE_SCHEMA_VERSION = "dsh-supreme/evidence@1";
+var CLOSE_EVIDENCE_HASH_RE = /^[0-9a-f]{64}$/;
+var CLOSE_EVIDENCE_ID_MAX = 256;
+function validateCloseEvidenceRecord(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return null;
+  const rec = value;
+  const artifact = typeof rec.artifact === "object" && rec.artifact !== null && !Array.isArray(rec.artifact) ? rec.artifact : undefined;
+  const status = rec.status === "PASS" || rec.status === "FAIL" || rec.status === "ERROR" || rec.status === "UNAVAILABLE" ? rec.status : undefined;
+  const shaOk = artifact !== undefined && (artifact.sha256 === undefined || typeof artifact.sha256 === "string" && CLOSE_EVIDENCE_HASH_RE.test(artifact.sha256));
+  const wellFormed = rec.schemaVersion === CLOSE_EVIDENCE_SCHEMA_VERSION && typeof rec.taskId === "string" && rec.taskId.length > 0 && rec.taskId.length <= CLOSE_EVIDENCE_ID_MAX && typeof rec.attempt === "number" && Number.isInteger(rec.attempt) && rec.attempt >= 1 && status !== undefined && typeof rec.reasonCode === "string" && rec.reasonCode.length > 0 && typeof rec.validatorId === "string" && rec.validatorId.length > 0 && typeof rec.validatorType === "string" && rec.validatorType.length > 0 && artifact !== undefined && shaOk;
+  if (!wellFormed)
+    return null;
+  return rec;
+}
 function canCloseTask(limits, input) {
   if (!limits.requireVerifierPassOnClose || input.risk !== "HIGH") {
     return { closable: true, reasonCode: "CLOSE_UNRESTRICTED" };
   }
-  if (input.verifierStatus === "PASS")
-    return { closable: true, reasonCode: "VERIFIER_PASS_RECORDED" };
-  return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
+  const hasEvidence = input.evidence !== undefined && input.evidence !== null;
+  const hasCurrentArtifact = input.artifact !== undefined && input.artifact !== null && typeof input.artifact.sha256 === "string";
+  if (!hasEvidence) {
+    if (hasCurrentArtifact) {
+      return { closable: false, reasonCode: "EVIDENCE_CURRENCY_UNVERIFIED" };
+    }
+    if (input.verifierStatus === "PASS")
+      return { closable: true, reasonCode: "VERIFIER_PASS_RECORDED" };
+    return { closable: false, reasonCode: `VERIFIER_${input.verifierStatus}_BLOCKS_CLOSE` };
+  }
+  const evidence = validateCloseEvidenceRecord(input.evidence);
+  if (evidence === null) {
+    return { closable: false, reasonCode: "EVIDENCE_UNBOUND" };
+  }
+  if (input.verifierStatus !== undefined && input.verifierStatus !== evidence.status) {
+    return { closable: false, reasonCode: "EVIDENCE_STATUS_CONFLICT" };
+  }
+  if (evidence.status !== "PASS") {
+    return { closable: false, reasonCode: `VERIFIER_${evidence.status}_BLOCKS_CLOSE` };
+  }
+  if (!hasCurrentArtifact) {
+    return { closable: false, reasonCode: "EVIDENCE_CURRENCY_UNVERIFIED" };
+  }
+  const boundHash = typeof evidence.artifact.sha256 === "string" ? evidence.artifact.sha256 : "";
+  if (!CLOSE_EVIDENCE_HASH_RE.test(boundHash) || boundHash !== input.artifact.sha256.toLowerCase() || evidence.artifact.revision !== undefined && input.artifact.revision !== undefined && evidence.artifact.revision !== input.artifact.revision) {
+    return { closable: false, reasonCode: "EVIDENCE_STALE" };
+  }
+  return { closable: true, reasonCode: "EVIDENCE_CURRENT_PASS" };
 }
 function buildDelegationScope(scope) {
   if (scope.secretPolicy !== "DENY_ALL") {
@@ -249,6 +294,56 @@ function evaluateAgentContact(limits, contact) {
     blocked: limits.agentContactPolicy === "DENY",
     reasonCode: "CONTACT_OUTSIDE_GRAPH"
   };
+}
+var A2A_RECIPIENT_UNRESOLVABLE_REASON = "a2a_recipient_unresolvable";
+function unresolvableRecipientDecision(limits, channel) {
+  return {
+    channel,
+    flagged: true,
+    blocked: limits.agentContactPolicy === "DENY",
+    reasonCode: "A2A_RECIPIENT_UNRESOLVABLE"
+  };
+}
+var DEFAULT_COMMS_TOOL_REGISTRY = Object.freeze([
+  ["subagent", "spawn"],
+  ["send_message", "message"],
+  ["spawn", "spawn"],
+  ["spawn_agent", "spawn"],
+  ["task", "spawn"],
+  ["task_delegation", "spawn"],
+  ["delegate", "spawn"],
+  ["delegate_task", "spawn"],
+  ["send", "message"],
+  ["send_to_agent", "message"],
+  ["message_agent", "message"],
+  ["notify_agent", "message"]
+]);
+function normalizeToolName(value) {
+  return typeof value === "string" ? value.trim().toLowerCase().slice(0, 128) : "";
+}
+var SPAWN_CHANNEL_TOKENS = new Set(["spawn", "delegate", "subagent", "workflow"]);
+function inferCommsChannel(toolName) {
+  const tokens = String(toolName).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.some((t) => SPAWN_CHANNEL_TOKENS.has(t)) ? "spawn" : "message";
+}
+function buildCommsToolRegistry(extraNames) {
+  const registry = new Map;
+  for (const [name, channel] of DEFAULT_COMMS_TOOL_REGISTRY) {
+    registry.set(normalizeToolName(name), channel);
+  }
+  for (const raw of Array.isArray(extraNames) ? extraNames : []) {
+    const name = normalizeToolName(raw);
+    if (name !== "" && !registry.has(name))
+      registry.set(name, inferCommsChannel(name));
+  }
+  return registry;
+}
+function isCommunicationTool(registry, toolName) {
+  const name = normalizeToolName(toolName);
+  return name !== "" && registry.has(name);
+}
+function commsChannelOf(registry, toolName) {
+  return registry.get(normalizeToolName(toolName)) ?? "message";
 }
 var RISK_LEVELS = ["LOW", "MEDIUM", "HIGH"];
 var OVERREACH_EVENT = "overreach_suspected";
@@ -356,11 +451,13 @@ var Config = z.object({
     to: z.string().min(1).max(512)
   })).default([]),
   maxRiskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]).default("HIGH"),
-  approvalRequiredFor: z.array(z.string().min(1).max(128)).default([])
+  approvalRequiredFor: z.array(z.string().min(1).max(128)).default([]),
+  commsToolNames: z.array(z.string().min(1).max(128)).default([])
 });
 function apply(ctx, config) {
   const limits = validateWorkflowLimits(config);
   const observability = ctx.supremeObservability;
+  const commsTools = buildCommsToolRegistry(limits.commsToolNames);
   const clip = (value) => value.slice(0, 96);
   const auditContact = (decision, from, to, origin, extra) => {
     if (!decision.flagged)
@@ -413,12 +510,6 @@ function apply(ctx, config) {
   };
   const CONTACT_TARGET_ARG_NAMES = ["agent_id", "to", "target"];
   const SPAWN_TOOL_NAMES = new Set(["subagent"]);
-  const channelOf = (toolName) => {
-    if (SPAWN_TOOL_NAMES.has(toolName))
-      return "spawn";
-    const tokens = toolName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    return tokens.some((t) => t === "spawn" || t === "delegate" || t === "subagent" || t === "workflow") ? "spawn" : "message";
-  };
   const firstContactTarget = (args) => {
     if (!args || typeof args !== "object" || Array.isArray(args))
       return "";
@@ -469,7 +560,19 @@ function apply(ctx, config) {
     buildDelegationScope: (scope) => buildDelegationScope(scope),
     limits: () => limits,
     evaluatePathScope: (path) => evaluatePathScope(limits, path),
-    canCloseTask: (input) => canCloseTask(limits, input),
+    canCloseTask: (input) => {
+      const decision = canCloseTask(limits, input);
+      if (limits.requireVerifierPassOnClose && input.risk === "HIGH") {
+        const bound = validateCloseEvidenceRecord(input.evidence);
+        const artifactSha = input.artifact && typeof input.artifact.sha256 === "string" ? input.artifact.sha256 : undefined;
+        observability.record(CLOSE_GATE_EVENT, {
+          ...bound !== null ? { task: clip(bound.taskId) } : {},
+          ...artifactSha !== undefined ? { artifact: artifactSha.slice(0, 12) } : {},
+          detail: `risk:${input.risk}:outcome:${decision.closable ? "ALLOWED" : "BLOCKED"}:reason:${decision.reasonCode}`
+        });
+      }
+      return decision;
+    },
     evaluateContact: (contact) => evaluateAgentContact(limits, contact),
     evaluateDelegation: (request) => {
       const verdict = evaluateOverreach(limits, request);
@@ -479,14 +582,24 @@ function apply(ctx, config) {
   };
   ctx.on("tools/pre-execute", async (exec, next) => {
     const toolName = typeof exec?.name === "string" ? exec.name : "";
-    if (toolName !== "") {
+    if (isCommunicationTool(commsTools, toolName)) {
       const sender = senderOf(exec);
-      const target = sender !== "" ? firstContactTarget(exec?.arguments) : "";
-      if (target !== "") {
+      const channel = commsChannelOf(commsTools, toolName);
+      const target = firstContactTarget(exec?.arguments);
+      if (target === "" && channel === "message") {
+        const malformed = unresolvableRecipientDecision(limits, channel);
+        auditContact(malformed, sender, "", "tools_pre_execute", { tool: toolName });
+        if (malformed.blocked) {
+          return {
+            kind: "deny",
+            reason: `supreme-workflow-policy: inter-agent ${channel} recipient unresolvable (${A2A_RECIPIENT_UNRESOLVABLE_REASON})`
+          };
+        }
+      } else if (target !== "") {
         const decision = evaluateAgentContact(limits, {
           from: sender,
           to: target,
-          channel: channelOf(toolName)
+          channel
         });
         if (decision.flagged) {
           auditContact(decision, sender, target, "tools_pre_execute", { tool: toolName });

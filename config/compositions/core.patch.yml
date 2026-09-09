@@ -21,6 +21,12 @@
 # Fixture plugins (supreme-minimal-probe, supreme-boot-probe, supreme-gate-
 # driver) are NOT part of the bundle and are intentionally absent here.
 #
+# v1.3.1 review-hardening (see docs/REVIEW-FIXES-v1.3.1.md): CORE disables
+# router/benchmark/workflow, so no v1.3.1 key is active here either — the
+# router's structural pre-dispatch cost gate (FIX-A) binds whenever the router
+# row is enabled, and the memory isolation cap / A2A comms registry /
+# benchmark checkpoint keys live in the supreme/lab fragments.
+#
 # v1.3 ASTRA-hardening keys (supreme-policy): cotVisibilityProfiles,
 # riskGatedCoT, denyCircumventionGuard, enableEncodingScan, capabilityClassGate,
 # sanctionedCapabilityClasses, labCapabilityClassAllowlist. CORE stays the

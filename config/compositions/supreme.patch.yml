@@ -27,6 +27,22 @@
 # config-owned, documented synthetic assumption). For production, replace
 # them from your own patch layer with YOUR providers — last write per row
 # replaces the whole config.
+#
+# v1.3.1 review-hardening posture (production-conservative; see
+# docs/REVIEW-FIXES-v1.3.1.md for the evidence):
+#   - PRE-DISPATCH COST ENFORCEMENT (FIX-A) is structural, not a config key:
+#     the router adapter consults supremePolicy at agent/request AND
+#     llm/stream before any dispatch and refuses paid/unknown routes. There
+#     is deliberately no off-switch; the only legitimate way to dispatch a
+#     paid route is the LAB policy override (executionClass LAB + allowPaid).
+#   - capabilityClassGate: AUDIT stays the conservative posture (same as
+#     v1.3 standard): unsanctioned labels are audited, not denied.
+#   - fastPath enabled: simple labeled tasks (SUMMARIZE/TRANSLATE/...) route
+#     directly with fanout 0 — opt-in here, still risk-gated (a measured
+#     non-LOW risk always takes the normal routing path).
+#   - bounds/outcomeCircuit/classAware keep their behavior-preserving
+#     defaults; they are pinned explicitly below so a bundle-default drift
+#     is visible in review.
 
 - id: supreme-policy
   config:
@@ -47,6 +63,13 @@
     # evidence are flagged `evidenceBacked: false` on the score + run records
     # (flag only — scores are never rewritten).
     requireEvidenceForScores: true
+    # v1.3.1 (IMP-R §5): recovery checkpoints — append-only checkpoints.jsonl
+    # in the benchmark dataDir this plugin already owns. Resume re-plans from
+    # TRUE state (artifact hashes re-checked) and NEVER auto-repeats a
+    # completed side effect. Defaults pinned explicitly; no I/O until used.
+    checkpoints:
+      fileName: checkpoints.jsonl
+      maxEntries: 1024
 
 - id: supreme-fake-llm
   config:
@@ -75,6 +98,28 @@
             capabilities: [chat]
             contextWindow: 131072
             failureDomain: synthetic-paid
+    # v1.3.1 (IMP-R) outcome-routing keys, pinned at their defaults:
+    #   - fastPath enabled (see header): simple labeled tasks route directly.
+    #   - bounds: retry-storm limits — 3 dispatch attempts per task, fallback
+    #     fanout ≤ 4, wall-clock budget OFF (0).
+    #   - outcomeCircuit: 3 consecutive real failures open the route for
+    #     cooldownMs; a single half-open probe then gates recovery.
+    #   - classAware: per-task-class Wilson lower-bound scoring with a fixed
+    #     1-hour recency half-life, fed from real benchmark history.
+    fastPath:
+      enabled: true
+    bounds:
+      maxRetries: 3
+      maxFanout: 4
+      wallClockBudgetMs: 0
+    outcomeCircuit:
+      enabled: true
+      consecutiveFailures: 3
+      cooldownMs: 60000
+    classAware:
+      enabled: true
+      halfLifeMs: 3600000
+      sampleLimit: 512
 
 - id: supreme-verifier
   config:
@@ -84,6 +129,10 @@
 - id: supreme-memory-policy
   config:
     registerPromptSection: false
+    # v1.3.1 (FIX-C): selections are (session, task)-owned in a bounded LRU
+    # store — no cross-session/cross-task fallback, unknown identity renders
+    # nothing. The cap floor is 8 (adapter boundary); 128 is the default.
+    selectionStoreCap: 128
     projectKnowledge:
       - id: project-overview
         text: 'DSH Supreme v1: seven host-side policy plugins composed on DeepSeek Harness.'
@@ -99,3 +148,9 @@
     allowedContacts: []
     maxRiskLevel: HIGH
     approvalRequiredFor: []
+    # v1.3.1 (FIX-D): A2A inspection is registry-first — tool identity comes
+    # from the trusted default registry (subagent/send_message/...), extended
+    # ADD-ONLY by this list. Ordinary tools whose arguments merely contain
+    # `target`/`to`/`agent_id` (e.g. copy_file) are never inspected. Register
+    # YOUR host's communication tools here if they are not in the default set.
+    commsToolNames: []

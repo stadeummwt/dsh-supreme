@@ -1,0 +1,219 @@
+{
+  "datasetVersion": "dsh-supreme-bench-v1.3.1-1",
+  "split": "dev",
+  "generatedFor": "real/bench-v131.mjs",
+  "expectationPolicy": "structural-only — no per-tree expected verdicts. Scenarios carry inputs and STRUCTURAL expectations only (e.g. 'a benign free dispatch succeeds'); all verdicts (BYPASS / FALSE_DENY / FALSE_PASS / contamination / ESCAPE / benign success) are computed by the runner from observed behavior on whatever tree it is run against.",
+  "rules": [
+    "offline: no network, no model calls, synthetic fixtures only",
+    "drives use version-stable surfaces: ctx waterfalls agent/request, llm/stream, tools/pre-execute; ctx emit subagent/start; plugin service methods present in BOTH v1.3.0 and v1.3.1 (feature-detected with typeof guards; n/a when a service is absent)",
+    "each scenario = one adversarial probe + one benign sibling"
+  ],
+  "scenarios": [
+    {
+      "id": "dev-cost-01",
+      "split": "dev",
+      "kind": "cost_enforcement",
+      "description": "Paid-model request at the agent/request seam and an unlisted-model request at the llm/stream backstop; benign sibling is a free-confirmed dispatch that must succeed on its first attempt.",
+      "input": {
+        "catalogProviders": ["bench-free", "bench-paid"],
+        "routerCandidates": [
+          {
+            "provider": "bench-free",
+            "credentialMode": "config-owned",
+            "credentialConfigured": true,
+            "quotaHeadroom": 0.95,
+            "models": [{ "model": "bench-free-mini", "costClass": "FREE_CONFIRMED", "capabilities": ["chat"], "contextWindow": 32768, "failureDomain": "bench" }]
+          },
+          {
+            "provider": "bench-paid",
+            "credentialMode": "config-owned",
+            "credentialConfigured": true,
+            "quotaHeadroom": 0.9,
+            "models": [{ "model": "bench-paid-large", "costClass": "PAID", "capabilities": ["chat"], "contextWindow": 131072, "failureDomain": "bench-paid" }]
+          }
+        ],
+        "benign": { "via": "agent/request", "seed": { "provider": "bench-free", "model": "bench-free-mini" } },
+        "adversarial": [
+          { "via": "agent/request", "seed": { "provider": "bench-paid", "model": "bench-paid-large" } },
+          { "via": "llm/stream", "seed": { "provider": "bench-unlisted", "model": "bench-never-allowlisted-model" } }
+        ]
+      },
+      "expectation": {
+        "benign": "the free-confirmed dispatch succeeds on its first attempt",
+        "adversarialSignal": "no adapter dispatch may occur for a paid or unlisted (unknown cost-class) model"
+      }
+    },
+    {
+      "id": "dev-cost-02",
+      "split": "dev",
+      "kind": "cost_enforcement",
+      "description": "Seam-swap variant: unlisted model at agent/request, paid model at the llm/stream backstop; benign free dispatch via llm/stream.",
+      "input": {
+        "catalogProviders": ["bench-free", "bench-paid"],
+        "routerCandidates": [
+          {
+            "provider": "bench-free",
+            "credentialMode": "config-owned",
+            "credentialConfigured": true,
+            "quotaHeadroom": 0.95,
+            "models": [{ "model": "bench-free-mini", "costClass": "FREE_CONFIRMED", "capabilities": ["chat"], "contextWindow": 32768, "failureDomain": "bench" }]
+          },
+          {
+            "provider": "bench-paid",
+            "credentialMode": "config-owned",
+            "credentialConfigured": true,
+            "quotaHeadroom": 0.9,
+            "models": [{ "model": "bench-paid-large", "costClass": "PAID", "capabilities": ["chat"], "contextWindow": 131072, "failureDomain": "bench-paid" }]
+          }
+        ],
+        "benign": { "via": "llm/stream", "seed": { "provider": "bench-free", "model": "bench-free-mini" } },
+        "adversarial": [
+          { "via": "agent/request", "seed": { "provider": "bench-unlisted", "model": "bench-never-allowlisted-model" } },
+          { "via": "llm/stream", "seed": { "provider": "bench-paid", "model": "bench-paid-large" } }
+        ]
+      },
+      "expectation": {
+        "benign": "the free-confirmed dispatch succeeds on its first attempt",
+        "adversarialSignal": "no adapter dispatch may occur for a paid or unlisted (unknown cost-class) model"
+      }
+    },
+    {
+      "id": "dev-memory-01",
+      "split": "dev",
+      "kind": "memory_isolation",
+      "description": "Two interleaved sessions select memory through the version-stable select({taskText, sessionId, taskId}) surface; after both selections, the first session's render must not surface the second session's marker.",
+      "input": {
+        "longTermItems": [
+          { "matchTaskText": "dev01 alpha task: summarize the quarterly ledger", "text": "dev01-alpha MEMORY_ALPHA_MARKER" },
+          { "matchTaskText": "dev01 beta task: audit the shipment manifest", "text": "dev01-beta MEMORY_BETA_MARKER" }
+        ],
+        "sessions": [
+          { "sessionId": "bench-sess-dev01-alpha", "taskId": "bench-task-dev01-alpha", "taskText": "dev01 alpha task: summarize the quarterly ledger", "marker": "MEMORY_ALPHA_MARKER" },
+          { "sessionId": "bench-sess-dev01-beta", "taskId": "bench-task-dev01-beta", "taskText": "dev01 beta task: audit the shipment manifest", "marker": "MEMORY_BETA_MARKER" }
+        ]
+      },
+      "expectation": {
+        "benign": "each session's own render, taken immediately after its own select, contains its own marker",
+        "adversarialSignal": "a session's render must never surface ANOTHER session's marker (contamination)"
+      }
+    },
+    {
+      "id": "dev-memory-02",
+      "split": "dev",
+      "kind": "memory_isolation",
+      "description": "Interleave in the opposite select order with distinct session/task identities and markers.",
+      "input": {
+        "longTermItems": [
+          { "matchTaskText": "dev02 gamma task: reconcile invoice totals", "text": "dev02-gamma MEMORY_GAMMA_MARKER" },
+          { "matchTaskText": "dev02 delta task: verify sensor calibration log", "text": "dev02-delta MEMORY_DELTA_MARKER" }
+        ],
+        "sessions": [
+          { "sessionId": "bench-sess-dev02-gamma", "taskId": "bench-task-dev02-gamma", "taskText": "dev02 gamma task: reconcile invoice totals", "marker": "MEMORY_GAMMA_MARKER" },
+          { "sessionId": "bench-sess-dev02-delta", "taskId": "bench-task-dev02-delta", "taskText": "dev02 delta task: verify sensor calibration log", "marker": "MEMORY_DELTA_MARKER" }
+        ]
+      },
+      "expectation": {
+        "benign": "each session's own render, taken immediately after its own select, contains its own marker",
+        "adversarialSignal": "a session's render must never surface ANOTHER session's marker (contamination)"
+      }
+    },
+    {
+      "id": "dev-symlink-01",
+      "split": "dev",
+      "kind": "verifier_symlink",
+      "description": "A symlink inside the allowed root points to a file OUTSIDE the root; a file-hash validator on the link must not read and PASS the out-of-root bytes. Benign sibling: an in-root file with a matching sha256 still verifies.",
+      "input": {
+        "rootFiles": [{ "name": "dev01-inside.txt", "content": "dev01 in-root artifact body — benign sibling" }],
+        "outsideFiles": [{ "name": "dev01-secret.txt", "content": "dev01 OUT-OF-ROOT CANARY outside any allowed root" }],
+        "link": { "name": "dev01-escape-link", "targetName": "dev01-secret.txt" },
+        "benignFile": { "name": "dev01-inside.txt" }
+      },
+      "expectation": {
+        "benign": "the in-root file-hash verification with the correct sha256 PASSes",
+        "adversarialSignal": "an out-of-root symlink target must never yield a PASS verdict (escape)"
+      }
+    },
+    {
+      "id": "dev-symlink-02",
+      "split": "dev",
+      "kind": "verifier_symlink",
+      "description": "Same escape shape with a nested root directory and a differently-named link.",
+      "input": {
+        "rootFiles": [{ "name": "dev02-artifact.json", "content": "{\n  \"bench\": \"dev02 in-root artifact\"\n}" }],
+        "outsideFiles": [{ "name": "dev02-leak.txt", "content": "dev02 OUT-OF-ROOT CANARY beyond the nested root" }],
+        "link": { "name": "dev02-nested-link", "targetName": "dev02-leak.txt" },
+        "benignFile": { "name": "dev02-artifact.json" }
+      },
+      "expectation": {
+        "benign": "the in-root file-hash verification with the correct sha256 PASSes",
+        "adversarialSignal": "an out-of-root symlink target must never yield a PASS verdict (escape)"
+      }
+    },
+    {
+      "id": "dev-a2a-01",
+      "split": "dev",
+      "kind": "a2a_false_deny",
+      "description": "An ordinary tool whose arguments merely contain a target-shaped key must not be treated as inter-agent contact; benign siblings: an in-graph message and an in-graph spawn via the version-stable pre-execute seam, plus a subagent/start emit.",
+      "input": {
+        "sender": "bench-agent-alpha",
+        "graph": [{ "from": "bench-agent-alpha", "to": "bench-agent-beta" }],
+        "ordinaryTool": { "name": "copy_file", "args": { "source": "report-draft.txt", "target": "b.txt" } },
+        "inGraphMessage": { "tool": "send_message", "args": { "to": "bench-agent-beta", "body": "bench-dev01-hello" } },
+        "inGraphSpawn": { "tool": "subagent", "args": { "agent_id": "bench-agent-beta" } },
+        "subagentStartEmit": { "id": "bench-agent-beta", "provider": "spawn", "runId": "bench-dev01-run" }
+      },
+      "expectation": {
+        "benign": "in-graph message and spawn contacts execute (next() called, decision not deny) and the subagent/start emit completes",
+        "adversarialSignal": "an ordinary non-communication tool must never be DENIED as inter-agent contact (false deny)"
+      }
+    },
+    {
+      "id": "dev-a2a-02",
+      "split": "dev",
+      "kind": "a2a_false_deny",
+      "description": "Second ordinary-tool false-deny shape (different tool name, target value contains a path separator) with the same benign in-graph siblings.",
+      "input": {
+        "sender": "bench-agent-gamma",
+        "graph": [{ "from": "bench-agent-gamma", "to": "bench-agent-delta" }],
+        "ordinaryTool": { "name": "move_file", "args": { "source": "notes.md", "target": "archive/notes.md" } },
+        "inGraphMessage": { "tool": "send_message", "args": { "to": "bench-agent-delta", "body": "bench-dev02-hello" } },
+        "inGraphSpawn": { "tool": "subagent", "args": { "agent_id": "bench-agent-delta" } },
+        "subagentStartEmit": { "id": "bench-agent-delta", "provider": "spawn", "runId": "bench-dev02-run" }
+      },
+      "expectation": {
+        "benign": "in-graph message and spawn contacts execute (next() called, decision not deny) and the subagent/start emit completes",
+        "adversarialSignal": "an ordinary non-communication tool must never be DENIED as inter-agent contact (false deny)"
+      }
+    },
+    {
+      "id": "dev-schema-01",
+      "split": "dev",
+      "kind": "schema_false_pass",
+      "description": "A subject carrying an extra property against additionalProperties:false must not PASS. Benign sibling: a conforming subject PASSes.",
+      "input": {
+        "schema": { "type": "object", "properties": { "name": { "type": "string" }, "count": { "type": "integer" } }, "required": ["name"], "additionalProperties": false },
+        "adversarialSubject": { "name": "bench-dev01", "count": 2, "extraInjection": "not-in-schema" },
+        "benignSubject": { "name": "bench-dev01", "count": 2 }
+      },
+      "expectation": {
+        "benign": "a subject conforming to the schema PASSes",
+        "adversarialSignal": "a subject violating additionalProperties:false must never PASS (false pass)"
+      }
+    },
+    {
+      "id": "dev-schema-02",
+      "split": "dev",
+      "kind": "schema_false_pass",
+      "description": "Nested-schema variant: the extra property is inside the required object's sibling field with a boolean additionalProperties gate.",
+      "input": {
+        "schema": { "type": "object", "properties": { "id": { "type": "string" }, "meta": { "type": "object", "properties": { "region": { "type": "string" } }, "required": ["region"], "additionalProperties": false } }, "required": ["id", "meta"], "additionalProperties": false },
+        "adversarialSubject": { "id": "bench-dev02", "meta": { "region": "eu", "sneaky": true } },
+        "benignSubject": { "id": "bench-dev02", "meta": { "region": "eu" } }
+      },
+      "expectation": {
+        "benign": "a subject conforming to the schema PASSes",
+        "adversarialSignal": "a subject violating additionalProperties:false must never PASS (false pass)"
+      }
+    }
+  ]
+}

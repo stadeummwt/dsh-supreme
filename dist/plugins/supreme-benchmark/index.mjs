@@ -287,6 +287,217 @@ class BenchmarkStore {
     return idx > 0 ? this.filePath.slice(0, idx) : ".";
   }
 }
+function classSampleRows(runs, limit = 512) {
+  const bounded = Math.max(1, Math.min(4096, Math.floor(limit)));
+  return runs.filter((r) => r.finishedAt !== undefined && typeof r.taskCategory === "string" && r.taskCategory.length > 0 && typeof r.success === "boolean").sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt)).slice(0, bounded).map((r) => ({
+    provider: r.provider,
+    model: r.model,
+    taskClass: r.taskCategory,
+    success: r.success === true,
+    at: r.finishedAt ?? r.startedAt
+  }));
+}
+function aggregateTaskLatency(runs) {
+  const groups = new Map;
+  for (const run of runs) {
+    if (run.finishedAt === undefined)
+      continue;
+    const duration = typeof run.latencyMs === "number" && run.latencyMs >= 0 ? run.latencyMs : run.finishedAt - run.startedAt;
+    if (!Number.isFinite(duration) || duration < 0)
+      continue;
+    const category = typeof run.taskCategory === "string" && run.taskCategory.length > 0 ? run.taskCategory : "UNCLASSIFIED";
+    const bucket = groups.get(category);
+    if (bucket)
+      bucket.push(duration);
+    else
+      groups.set(category, [duration]);
+  }
+  const out = [];
+  for (const [taskCategory, durations] of groups) {
+    const sorted = [...durations].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    out.push({
+      taskCategory,
+      samples: sorted.length,
+      avgLatencyMs: Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length),
+      medianLatencyMs: median,
+      maxLatencyMs: sorted[sorted.length - 1]
+    });
+  }
+  return out.sort((a, b) => a.taskCategory.localeCompare(b.taskCategory));
+}
+var CHECKPOINT_STATUSES = ["active", "completed", "interrupted"];
+
+class CheckpointValidationError extends Error {
+  issues;
+  constructor(issues) {
+    super(`invalid checkpoint record: ${issues.join("; ")}`);
+    this.issues = issues;
+    this.name = "CheckpointValidationError";
+  }
+}
+var ARTIFACT_HASH_PATTERN = /^[A-Za-z0-9._:/+-]{1,128}$/;
+function validateCheckpointRecord(raw) {
+  const issues = [];
+  if (!raw || typeof raw !== "object")
+    throw new CheckpointValidationError(["record must be an object"]);
+  const rec = raw;
+  assertCondition(rec.schemaVersion === 1, issues, "schemaVersion must be 1");
+  assertCondition(rec.kind === "checkpoint", issues, "kind must be checkpoint");
+  assertCondition(typeof rec.taskId === "string" && rec.taskId.length > 0 && rec.taskId.length <= 128, issues, "taskId must be 1..128 chars");
+  assertCondition(typeof rec.stepIndex === "number" && Number.isInteger(rec.stepIndex) && rec.stepIndex >= 0, issues, "stepIndex must be an integer >= 0");
+  if (!Array.isArray(rec.artifactRefs) || rec.artifactRefs.length > 16) {
+    issues.push("artifactRefs must be an array of at most 16 strings");
+  } else {
+    for (const ref of rec.artifactRefs) {
+      assertCondition(typeof ref === "string" && ref.length > 0 && ref.length <= 128, issues, "each artifactRef must be 1..128 chars");
+    }
+  }
+  if (rec.artifactHashes !== undefined) {
+    if (!Array.isArray(rec.artifactHashes) || rec.artifactHashes.length > 16) {
+      issues.push("artifactHashes must be an array of at most 16 {ref, hash} pairs");
+    } else {
+      for (const pair of rec.artifactHashes) {
+        const p = pair;
+        assertCondition(!!p && typeof p.ref === "string" && p.ref.length > 0 && p.ref.length <= 128 && typeof p.hash === "string" && ARTIFACT_HASH_PATTERN.test(p.hash), issues, "each artifactHash must be {ref: 1..128 chars, hash: bounded token}");
+      }
+    }
+  }
+  if (rec.sideEffectsRegistered !== undefined) {
+    assertCondition(typeof rec.sideEffectsRegistered === "boolean", issues, "sideEffectsRegistered must be a boolean");
+  }
+  assertCondition(typeof rec.status === "string" && CHECKPOINT_STATUSES.includes(rec.status), issues, "status must be active|completed|interrupted");
+  assertCondition(typeof rec.updatedAt === "number" && Number.isFinite(rec.updatedAt), issues, "updatedAt must be a finite number");
+  if (issues.length > 0)
+    throw new CheckpointValidationError(issues);
+  return raw;
+}
+function checkArtifactHashes(recorded, current) {
+  if (current === undefined || recorded === undefined || recorded.length === 0)
+    return "unverified";
+  for (const pair of recorded) {
+    const now = current[pair.ref];
+    if (now === undefined || now !== pair.hash)
+      return "mismatch";
+  }
+  return "verified";
+}
+function planResumeFromRecords(taskId, records, currentArtifactHashes) {
+  const latest = new Map;
+  for (const rec of records) {
+    if (rec.taskId !== taskId)
+      continue;
+    const prev = latest.get(rec.stepIndex);
+    if (prev === undefined || rec.updatedAt >= prev.updatedAt)
+      latest.set(rec.stepIndex, rec);
+  }
+  const steps = [...latest.entries()].sort((a, b) => a[0] - b[0]).map(([stepIndex, rec]) => {
+    const hashCheck = checkArtifactHashes(rec.artifactHashes, currentArtifactHashes);
+    return {
+      stepIndex,
+      status: rec.status,
+      redo: rec.status !== "completed" || hashCheck === "mismatch",
+      artifactRefs: [...rec.artifactRefs],
+      updatedAt: rec.updatedAt,
+      ...rec.sideEffectsRegistered !== undefined ? { sideEffectsRegistered: rec.sideEffectsRegistered } : {},
+      ...rec.artifactHashes !== undefined ? { artifactHashes: rec.artifactHashes.map((p) => ({ ...p })) } : {},
+      ...currentArtifactHashes !== undefined || rec.artifactHashes !== undefined ? { hashCheck } : {}
+    };
+  });
+  return {
+    taskId,
+    steps,
+    completedCount: steps.filter((s) => s.status === "completed").length,
+    redoCount: steps.filter((s) => s.redo).length
+  };
+}
+class CheckpointStore {
+  filePath;
+  fsImpl;
+  records = [];
+  corruptLines = 0;
+  queue = Promise.resolve();
+  loaded = false;
+  maxEntries;
+  constructor(filePath, fsImpl, opts = {}) {
+    this.filePath = filePath;
+    this.fsImpl = fsImpl;
+    const cap = opts.maxEntries ?? 1024;
+    this.maxEntries = Number.isFinite(cap) ? Math.max(16, Math.min(65536, Math.floor(cap))) : 1024;
+  }
+  async init() {
+    if (this.loaded)
+      return this.stats();
+    this.loaded = true;
+    const raw = await this.fsImpl.readFile(this.filePath).catch(() => null);
+    if (raw) {
+      const parsed = [];
+      for (const line of raw.split(`
+`)) {
+        if (line.length === 0)
+          continue;
+        try {
+          parsed.push(validateCheckpointRecord(JSON.parse(line)));
+        } catch {
+          this.corruptLines++;
+        }
+      }
+      this.records.push(...parsed.slice(-this.maxEntries));
+    }
+    return this.stats();
+  }
+  async persist(record) {
+    this.records.push(record);
+    if (this.records.length > this.maxEntries) {
+      this.records.shift();
+    }
+    const line = JSON.stringify(record) + `
+`;
+    this.queue = this.queue.then(async () => {
+      await this.fsImpl.mkdir(this.dirOf());
+      await this.fsImpl.appendFile(this.filePath, line);
+    }).catch(() => {});
+    return this.queue;
+  }
+  async record(input) {
+    const full = {
+      schemaVersion: 1,
+      kind: "checkpoint",
+      taskId: input.taskId,
+      stepIndex: input.stepIndex,
+      artifactRefs: [...input.artifactRefs ?? []],
+      ...input.artifactHashes !== undefined ? { artifactHashes: input.artifactHashes.map((p) => ({ ref: p.ref, hash: p.hash })) } : {},
+      ...input.sideEffectsRegistered !== undefined ? { sideEffectsRegistered: input.sideEffectsRegistered === true } : {},
+      status: input.status ?? "active",
+      updatedAt: input.updatedAt ?? Date.now()
+    };
+    validateCheckpointRecord(full);
+    await this.persist(full);
+    return full;
+  }
+  recordsFor(taskId) {
+    return this.records.filter((r) => r.taskId === taskId);
+  }
+  resumePlan(taskId) {
+    return planResumeFromRecords(taskId, this.records);
+  }
+  resume(taskId, currentArtifactHashes) {
+    return planResumeFromRecords(taskId, this.records, currentArtifactHashes);
+  }
+  stats() {
+    return { checkpoints: this.records.length, corruptLines: this.corruptLines };
+  }
+  async flush() {
+    await this.queue.catch(() => {
+      return;
+    });
+  }
+  dirOf() {
+    const idx = this.filePath.lastIndexOf("/");
+    return idx > 0 ? this.filePath.slice(0, idx) : ".";
+  }
+}
 
 // src/plugins/supreme-benchmark/index.ts
 var name = "supreme-benchmark";
@@ -294,7 +505,11 @@ var inject = [];
 var Config = z.object({
   dataDir: z.string().default("dsh-supreme/data/benchmark"),
   fileName: z.string().default("benchmark.jsonl"),
-  requireEvidenceForScores: z.boolean().default(false)
+  requireEvidenceForScores: z.boolean().default(false),
+  checkpoints: z.object({
+    fileName: z.string().default("checkpoints.jsonl"),
+    maxEntries: z.number().int().min(16).max(65536).default(1024)
+  }).default({ fileName: "checkpoints.jsonl", maxEntries: 1024 })
 });
 function apply(ctx, config) {
   const fs = process.getBuiltinModule("node:fs").promises;
@@ -315,6 +530,11 @@ function apply(ctx, config) {
     requireEvidenceForScores: config.requireEvidenceForScores
   });
   const ready = store.init();
+  const checkpointStore = new CheckpointStore(resolve(config.dataDir, config.checkpoints.fileName), fsImpl, {
+    maxEntries: config.checkpoints.maxEntries
+  });
+  const checkpointsReady = checkpointStore.init();
+  const observability = () => ctx.get("supremeObservability");
   const service = {
     recordTask: async (task) => {
       await ready;
@@ -328,11 +548,22 @@ function apply(ctx, config) {
     },
     finishRun: async (runId, outcome) => {
       await ready;
-      return store.finishRun(runId, {
+      const run = await store.finishRun(runId, {
         ...outcome,
         failureClass: outcome.failureClass,
         verification: outcome.verification
       });
+      if (run && run.finishedAt !== undefined) {
+        const duration = typeof run.latencyMs === "number" && run.latencyMs >= 0 ? run.latencyMs : run.finishedAt - run.startedAt;
+        if (Number.isFinite(duration) && duration >= 0) {
+          observability()?.record("task_latency", {
+            benchmarkRunId: run.runId,
+            latencyMs: duration,
+            detail: `task:${run.taskCategory}`.slice(0, 256)
+          });
+        }
+      }
+      return run;
     },
     recordScore: async (input) => {
       await ready;
@@ -347,10 +578,36 @@ function apply(ctx, config) {
     },
     queryHistory: (filter) => store.queryHistory(filter),
     aggregateModelPerformance: () => store.aggregateModelPerformance(),
-    stats: () => store.stats()
+    stats: () => store.stats(),
+    classSamples: (limit) => classSampleRows(store.queryHistory(), limit),
+    taskLatency: () => aggregateTaskLatency(store.queryHistory()),
+    checkpoint: async (input) => {
+      await checkpointsReady;
+      const record = await checkpointStore.record({
+        taskId: input.taskId,
+        stepIndex: input.step,
+        artifactRefs: input.artifactRefs,
+        artifactHashes: input.artifactHashes,
+        sideEffectsRegistered: input.sideEffectsRegistered,
+        status: input.status
+      });
+      observability()?.record("checkpoint_recorded", {
+        detail: `task:${input.taskId}:step:${input.step}:${record.status}:effects:${record.sideEffectsRegistered === true ? "registered" : "none"}`.slice(0, 256)
+      });
+      return record;
+    },
+    resumeCheckpoint: async (taskId, currentArtifactHashes) => {
+      await checkpointsReady;
+      const plan = checkpointStore.resume(taskId, currentArtifactHashes);
+      observability()?.record("checkpoint_resumed", {
+        detail: `task:${plan.taskId}:steps:${plan.steps.length}:completed:${plan.completedCount}:redo:${plan.redoCount}`.slice(0, 256)
+      });
+      return plan;
+    },
+    checkpointStats: () => checkpointStore.stats()
   };
   ctx.provide("supremeBenchmark", Object.freeze(service));
-  ctx.effect(() => () => store.flush(), "supreme-benchmark.flush");
+  ctx.effect(() => () => Promise.all([store.flush(), checkpointStore.flush()]), "supreme-benchmark.flush");
   ctx.logger.info("supreme-benchmark store at %s", resolve(config.dataDir, config.fileName));
 }
 function genId(prefix) {

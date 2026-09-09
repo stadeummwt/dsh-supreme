@@ -1,0 +1,67 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "guard-pairs",
+  "description": "Adversarial + benign sibling pairs for each v1.3.1 guard. Each pair drives the REAL adapters on REAL pinned cordis: the adversarial case MUST be blocked/rejected and the benign sibling MUST pass untouched (false-DENY check).",
+  "costGate": {
+    "candidates": {
+      "free": { "provider": "synthetic-free", "model": "free-mini", "costClass": "FREE_CONFIRMED", "failureDomain": "free-domain", "quotaHeadroom": 0.9 },
+      "paid": { "provider": "synthetic-paid", "model": "paid-large", "costClass": "PAID", "failureDomain": "paid-domain", "quotaHeadroom": 0.9 }
+    },
+    "adversarial": { "provider": "synthetic-paid", "model": "paid-large" },
+    "benign": { "provider": "synthetic-free", "model": "free-mini" },
+    "expected": {
+      "agentRequestDenyEmptiesRoute": true,
+      "llmStreamDenyErrorCode": "COST_POLICY_DENIED",
+      "adversarialDispatches": 0,
+      "benignDispatchesAfterRepeat": 2,
+      "benignChunksPerDispatch": 3,
+      "benignRoutePreserved": true,
+      "deniedEvent": "route_cost_denied",
+      "freeEvidenceEvent": "free_route_evidence",
+      "freeEvidenceEventCountAfterRepeat": 1
+    }
+  },
+  "symlinkVerifier": {
+    "inside": { "name": "inside-artifact.txt", "content": "in-root artifact content\n" },
+    "outside": { "dir": "outside-root", "name": "secret.txt", "content": "V131FI_CANARY_CREDENTIAL_9b40 out-of-root secret\n" },
+    "linkName": "link-escape",
+    "expected": {
+      "adversarialStatus": "UNAVAILABLE",
+      "adversarialReason": "PATH_OUTSIDE_ALLOWED_ROOTS",
+      "benignStatus": "PASS",
+      "benignReason": "OK"
+    }
+  },
+  "a2aRegistry": {
+    "graph": { "from": "agent-alpha", "to": "agent-beta" },
+    "adversarial": { "tool": "send_message", "from": "agent-alpha", "to": "agent-gamma", "body": "V131FI_CANARY_CREDENTIAL_9b40" },
+    "benignInGraph": { "tool": "send_message", "from": "agent-alpha", "to": "agent-beta", "body": "hello beta" },
+    "benignOrdinary": { "tool": "copy_file", "from": "agent-alpha", "args": { "source": "a.txt", "target": "b.txt" } },
+    "expected": {
+      "adversarialDecision": "deny",
+      "adversarialNextCalled": false,
+      "adversarialDenyReason": "a2a_contact_denied",
+      "adversarialEvent": "a2a_contact",
+      "adversarialEventReason": "reason:CONTACT_OUTSIDE_GRAPH",
+      "benignInGraphDecision": "allow",
+      "benignInGraphNextCalled": true,
+      "benignInGraphA2aEvents": 0,
+      "benignOrdinaryDecision": "allow",
+      "benignOrdinaryNextCalled": true,
+      "benignOrdinaryA2aEvents": 0
+    }
+  },
+  "memoryIsolation": {
+    "sessions": {
+      "A": { "id": "session-guard-a", "task": { "id": "task-guard-a", "taskText": "recall retained note V131FI_CANARY_PROMPT_7f3a alpha-marker" } },
+      "B": { "id": "session-guard-b", "task": { "id": "task-guard-b", "taskText": "recall retained note V131FI_CANARY_PROMPT_7f3a beta-marker" } }
+    },
+    "itemTextSuffix": "::retained-context",
+    "expected": {
+      "crossLookupNull": true,
+      "ownLookupHasOwnMarker": true,
+      "ownRenderHasOwnMarker": true,
+      "ownRenderExcludesOtherMarker": true
+    }
+  }
+}

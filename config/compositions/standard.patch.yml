@@ -31,6 +31,14 @@
 # denyCircumventionGuard) keep their bundle defaults; the workflow/router/
 # benchmark v1.3 keys live in the supreme/lab fragments where those plugins
 # are active.
+#
+# v1.3.1 review-hardening (production-conservative; see
+# docs/REVIEW-FIXES-v1.3.1.md): STANDARD keeps only memory-policy + verifier
+# active, so the only new key surfaced here is the memory isolation cap —
+# pinned at its documented default. The router v1.3.1 keys (bounds/fastPath/
+# outcomeCircuit/classAware, plus the structural pre-dispatch cost gate), the
+# benchmark checkpoint keys, and the A2A comms registry live in the
+# supreme/lab fragments where those plugins are active.
 
 - id: supreme-policy
   config:
@@ -57,6 +65,9 @@
 - id: supreme-memory-policy
   config:
     registerPromptSection: false
+    # v1.3.1 (FIX-C): (session, task)-owned selection LRU — no cross-session
+    # fallback, unknown identity renders nothing. Floor 8; 128 is the default.
+    selectionStoreCap: 128
     projectKnowledge:
       - id: project-overview
         text: 'DSH Supreme v1: seven host-side policy plugins composed on DeepSeek Harness.'

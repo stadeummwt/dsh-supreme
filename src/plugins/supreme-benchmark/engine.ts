@@ -482,3 +482,462 @@ export class BenchmarkStore {
     return idx > 0 ? this.filePath.slice(0, idx) : '.';
   }
 }
+
+// ---------------------------------------------------------------------------
+// v1.3.1 (IMP-R) — Routing based on work outcomes (support surfaces).
+//
+// All additions are deterministic: fixed formulas, ids/labels/counts/durations
+// only, no ML, no network. They extend the store WITHOUT changing any v1.2/
+// v1.3 record shape (schemas/benchmark-record.schema.json untouched).
+// ---------------------------------------------------------------------------
+
+// --- §1 support: per-task-class outcome samples for the router -------------
+
+export interface ClassSampleRow {
+  provider: string;
+  model: string;
+  /** Benchmark taskCategory (the class label). */
+  taskClass: string;
+  success: boolean;
+  /** Epoch ms of the finish (or start when unfinished) — recency input. */
+  at: number;
+}
+
+/**
+ * Most-recent-first bounded sample rows for class-aware routing (IMP-R §1).
+ * Only finished runs with a defined taskCategory and success outcome qualify.
+ */
+export function classSampleRows(runs: BenchmarkRun[], limit = 512): ClassSampleRow[] {
+  const bounded = Math.max(1, Math.min(4_096, Math.floor(limit)));
+  return runs
+    .filter((r) => r.finishedAt !== undefined && typeof r.taskCategory === 'string' && r.taskCategory.length > 0 && typeof r.success === 'boolean')
+    .sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt))
+    .slice(0, bounded)
+    .map((r) => ({
+      provider: r.provider,
+      model: r.model,
+      taskClass: r.taskCategory,
+      success: r.success === true,
+      at: r.finishedAt ?? r.startedAt,
+    }));
+}
+
+// --- §6 support: end-to-end task latency (durations only) -------------------
+
+export interface TaskLatencyStat {
+  taskCategory: string;
+  samples: number;
+  avgLatencyMs: number | null;
+  medianLatencyMs: number | null;
+  maxLatencyMs: number | null;
+}
+
+/**
+ * End-to-end task latency per task category over finished runs. The duration
+ * is the run's own latencyMs when recorded, else finishedAt − startedAt —
+ * the same span the observability task_latency event measures from task
+ * begin to close. Durations only; no content.
+ */
+export function aggregateTaskLatency(runs: BenchmarkRun[]): TaskLatencyStat[] {
+  const groups = new Map<string, number[]>();
+  for (const run of runs) {
+    if (run.finishedAt === undefined) continue;
+    const duration = typeof run.latencyMs === 'number' && run.latencyMs >= 0 ? run.latencyMs : run.finishedAt - run.startedAt;
+    if (!Number.isFinite(duration) || duration < 0) continue;
+    const category = typeof run.taskCategory === 'string' && run.taskCategory.length > 0 ? run.taskCategory : 'UNCLASSIFIED';
+    const bucket = groups.get(category);
+    if (bucket) bucket.push(duration);
+    else groups.set(category, [duration]);
+  }
+  const out: TaskLatencyStat[] = [];
+  for (const [taskCategory, durations] of groups) {
+    const sorted = [...durations].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    out.push({
+      taskCategory,
+      samples: sorted.length,
+      avgLatencyMs: Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length),
+      medianLatencyMs: median,
+      maxLatencyMs: sorted[sorted.length - 1],
+    });
+  }
+  return out.sort((a, b) => a.taskCategory.localeCompare(b.taskCategory));
+}
+
+// --- §5: recovery checkpoints (minimal) --------------------------------------
+//
+// checkpoint = { taskId, stepIndex, artifactRefs, artifactHashes,
+// sideEffectsRegistered, status, updatedAt } — an append-only JSONL file
+// (checkpoints.jsonl) in the benchmark dataDir the plugin ALREADY owns,
+// written through the same BenchmarkFs seam. Replay is last-write-wins per
+// (taskId, stepIndex).
+//
+// v1.3.1 (IMP-R §5) record shape (all additive/optional — older records stay
+// valid):
+//   artifactHashes         — [{ref, hash}] content digests of the artifacts
+//                            the step produced (ids + digests only, never
+//                            artifact content; ≤16 pairs, ref/hash ≤128 chars)
+//   sideEffectsRegistered  — true when the host REGISTERED the step's real
+//                            side effects (artifacts written) at checkpoint
+//                            time; surfaced on every resume step.
+//
+// Resume semantics (documented contract):
+//   - The resume API is a PURE read of the CURRENT store state (records are
+//     reloaded from the JSONL the plugin owns) and NEVER auto-repeats side
+//     effects: steps whose latest record is 'completed' with VERIFIED hashes
+//     are never marked redo, and assertNoRepeatedSideEffects throws before
+//     any action could target a completed step.
+//   - When the caller supplies currentArtifactHashes (the REAL current state
+//     of the artifacts, measured by the host), every recorded hash is
+//     re-checked: a 'completed' step whose recorded hash no longer matches
+//     the current artifact (or whose artifact is missing) is reported
+//     hashCheck:'mismatch' + redo:true — but it is NEVER included in
+//     resumeActions (auto-repeat is forbidden); the host must explicitly
+//     re-record or repair before redoing such a step.
+//   - Bounds: the in-memory store keeps at most `maxEntries` records (default
+//     1024, oldest evicted first; the disk file stays append-only), ≤16
+//     artifact refs and ≤16 hash pairs per record.
+
+export const CHECKPOINT_STATUSES = ['active', 'completed', 'interrupted'] as const;
+export type CheckpointStatus = (typeof CHECKPOINT_STATUSES)[number];
+
+export interface CheckpointRecord {
+  schemaVersion: 1;
+  kind: 'checkpoint';
+  taskId: string;
+  stepIndex: number;
+  /** Artifact references (ids/paths-as-ids, bounded) — never artifact content. */
+  artifactRefs: string[];
+  /**
+   * v1.3.1 (IMP-R §5): content digests for (a subset of) the artifacts —
+   * pairs of ref → hash. Ids + digests only, never artifact content.
+   */
+  artifactHashes?: Array<{ ref: string; hash: string }>;
+  /**
+   * v1.3.1 (IMP-R §5): true when the host registered the step's real side
+   * effects (e.g. artifacts written) at checkpoint time.
+   */
+  sideEffectsRegistered?: boolean;
+  status: CheckpointStatus;
+  updatedAt: number;
+}
+
+export class CheckpointValidationError extends Error {
+  constructor(public readonly issues: string[]) {
+    super(`invalid checkpoint record: ${issues.join('; ')}`);
+    this.name = 'CheckpointValidationError';
+  }
+}
+
+/** Bounded hash token: digests or deterministic synthetic ids (no spaces). */
+const ARTIFACT_HASH_PATTERN = /^[A-Za-z0-9._:/+-]{1,128}$/;
+
+/** Deterministic checkpoint validation (bounded, id/label-only fields). */
+export function validateCheckpointRecord(raw: unknown): CheckpointRecord {
+  const issues: string[] = [];
+  if (!raw || typeof raw !== 'object') throw new CheckpointValidationError(['record must be an object']);
+  const rec = raw as Record<string, unknown>;
+  assertCondition(rec.schemaVersion === 1, issues, 'schemaVersion must be 1');
+  assertCondition(rec.kind === 'checkpoint', issues, 'kind must be checkpoint');
+  assertCondition(typeof rec.taskId === 'string' && rec.taskId.length > 0 && rec.taskId.length <= 128, issues, 'taskId must be 1..128 chars');
+  assertCondition(typeof rec.stepIndex === 'number' && Number.isInteger(rec.stepIndex) && rec.stepIndex >= 0, issues, 'stepIndex must be an integer >= 0');
+  if (!Array.isArray(rec.artifactRefs) || rec.artifactRefs.length > 16) {
+    issues.push('artifactRefs must be an array of at most 16 strings');
+  } else {
+    for (const ref of rec.artifactRefs) {
+      assertCondition(typeof ref === 'string' && ref.length > 0 && ref.length <= 128, issues, 'each artifactRef must be 1..128 chars');
+    }
+  }
+  // v1.3.1 (IMP-R §5): artifact hash pairs + side-effect registration flag.
+  if (rec.artifactHashes !== undefined) {
+    if (!Array.isArray(rec.artifactHashes) || rec.artifactHashes.length > 16) {
+      issues.push('artifactHashes must be an array of at most 16 {ref, hash} pairs');
+    } else {
+      for (const pair of rec.artifactHashes) {
+        const p = pair as Record<string, unknown> | null;
+        assertCondition(
+          !!p && typeof p.ref === 'string' && p.ref.length > 0 && p.ref.length <= 128 &&
+            typeof p.hash === 'string' && ARTIFACT_HASH_PATTERN.test(p.hash),
+          issues,
+          'each artifactHash must be {ref: 1..128 chars, hash: bounded token}',
+        );
+      }
+    }
+  }
+  if (rec.sideEffectsRegistered !== undefined) {
+    assertCondition(typeof rec.sideEffectsRegistered === 'boolean', issues, 'sideEffectsRegistered must be a boolean');
+  }
+  assertCondition(
+    typeof rec.status === 'string' && (CHECKPOINT_STATUSES as readonly string[]).includes(rec.status),
+    issues,
+    'status must be active|completed|interrupted',
+  );
+  assertCondition(typeof rec.updatedAt === 'number' && Number.isFinite(rec.updatedAt), issues, 'updatedAt must be a finite number');
+  if (issues.length > 0) throw new CheckpointValidationError(issues);
+  return raw as CheckpointRecord;
+}
+
+export type ArtifactHashCheck = 'verified' | 'mismatch' | 'unverified';
+
+export interface ResumeStep {
+  stepIndex: number;
+  status: CheckpointStatus;
+  /**
+   * true when work is needed: the latest record is NOT 'completed', OR the
+   * step is 'completed' but its recorded artifact hashes NO LONGER match the
+   * caller-provided current state (stale side effect — surfaced, never
+   * auto-redone; see resumeActions).
+   */
+  redo: boolean;
+  artifactRefs: string[];
+  updatedAt: number;
+  /** v1.3.1 (IMP-R §5): carried from the latest record (absent when unrecorded). */
+  sideEffectsRegistered?: boolean;
+  /** v1.3.1 (IMP-R §5): carried from the latest record (absent when unrecorded). */
+  artifactHashes?: Array<{ ref: string; hash: string }>;
+  /**
+   * v1.3.1 (IMP-R §5): result of re-checking the recorded hashes against the
+   * caller-provided current state — 'verified' when every recorded hash still
+   * matches, 'mismatch' when any ref is missing or differs, 'unverified' when
+   * no current-state map was supplied (or the step recorded no hashes).
+   */
+  hashCheck?: ArtifactHashCheck;
+}
+
+export interface ResumePlan {
+  taskId: string;
+  steps: ResumeStep[];
+  completedCount: number;
+  redoCount: number;
+}
+
+/**
+ * Re-check a step's recorded artifact hashes against the caller-provided
+ * REAL current state (deterministic; no fs access inside the engine — the
+ * host measures the artifacts and passes the digests in).
+ */
+export function checkArtifactHashes(
+  recorded: Array<{ ref: string; hash: string }> | undefined,
+  current: Record<string, string> | undefined,
+): ArtifactHashCheck {
+  if (current === undefined || recorded === undefined || recorded.length === 0) return 'unverified';
+  for (const pair of recorded) {
+    const now = current[pair.ref];
+    if (now === undefined || now !== pair.hash) return 'mismatch';
+  }
+  return 'verified';
+}
+
+/**
+ * PURE resume planning from the CURRENT store state. A step is `redo` iff
+ * its latest record status is not 'completed', OR the step IS 'completed'
+ * but its recorded artifact hashes no longer match the supplied current
+ * state (stale evidence). Completed side effects with VERIFIED hashes are
+ * NEVER re-planned. Steps never recorded are reported with status 'active'
+ * and redo=true (fresh work, nothing to repeat).
+ */
+export function planResumeFromRecords(
+  taskId: string,
+  records: CheckpointRecord[],
+  currentArtifactHashes?: Record<string, string>,
+): ResumePlan {
+  const latest = new Map<number, CheckpointRecord>();
+  for (const rec of records) {
+    if (rec.taskId !== taskId) continue;
+    const prev = latest.get(rec.stepIndex);
+    if (prev === undefined || rec.updatedAt >= prev.updatedAt) latest.set(rec.stepIndex, rec);
+  }
+  const steps: ResumeStep[] = [...latest.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([stepIndex, rec]) => {
+      const hashCheck = checkArtifactHashes(rec.artifactHashes, currentArtifactHashes);
+      return {
+        stepIndex,
+        status: rec.status,
+        redo: rec.status !== 'completed' || hashCheck === 'mismatch',
+        artifactRefs: [...rec.artifactRefs],
+        updatedAt: rec.updatedAt,
+        ...(rec.sideEffectsRegistered !== undefined ? { sideEffectsRegistered: rec.sideEffectsRegistered } : {}),
+        ...(rec.artifactHashes !== undefined ? { artifactHashes: rec.artifactHashes.map((p) => ({ ...p })) } : {}),
+        ...(currentArtifactHashes !== undefined || rec.artifactHashes !== undefined ? { hashCheck } : {}),
+      };
+    });
+  return {
+    taskId,
+    steps,
+    completedCount: steps.filter((s) => s.status === 'completed').length,
+    redoCount: steps.filter((s) => s.redo).length,
+  };
+}
+
+export class ResumeSafetyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResumeSafetyError';
+  }
+}
+
+/**
+ * Side-effect safety assertion (IMP-R §5): throws when any intended action
+ * targets a step whose CURRENT latest status is 'completed' — i.e. resume
+ * must NEVER auto-repeat an already-executed side effect. Fresh steps
+ * (never recorded) and steps whose latest status is 'active'/'interrupted'
+ * are allowed.
+ */
+export function assertNoRepeatedSideEffects(
+  plan: ResumePlan,
+  actions: Array<{ stepIndex: number }>,
+): void {
+  const byIndex = new Map(plan.steps.map((s) => [s.stepIndex, s]));
+  for (const action of actions) {
+    const step = byIndex.get(action.stepIndex);
+    if (step && step.status === 'completed') {
+      throw new ResumeSafetyError(
+        `resume would repeat a completed side effect: task ${plan.taskId} step ${action.stepIndex} is already completed`,
+      );
+    }
+  }
+}
+
+/**
+ * Pure action derivation for a resume: the steps that may be AUTO-run, with
+ * the safety assertion applied. Only steps whose latest record is not
+ * 'completed' qualify — hash-mismatched 'completed' steps are surfaced by
+ * the plan (redo=true, hashCheck:'mismatch') but are NEVER auto-runnable
+ * (resume must not auto-repeat a side effect it cannot prove is stale-safe
+ * to redo; the host decides after inspection). Runs of this planner NEVER
+ * include completed steps.
+ */
+export function resumeActions(plan: ResumePlan): ResumeStep[] {
+  const actions = plan.steps.filter((s) => s.redo && s.status !== 'completed');
+  // Assert-in-code: completed steps can never appear in the action list.
+  assertNoRepeatedSideEffects(plan, actions);
+  return actions;
+}
+
+/** Minimal fs seam is REUSED from the benchmark store (BenchmarkFs). */
+export class CheckpointStore {
+  private readonly records: CheckpointRecord[] = [];
+  private corruptLines = 0;
+  private queue: Promise<void> = Promise.resolve();
+  private loaded = false;
+  private readonly maxEntries: number;
+
+  constructor(
+    private readonly filePath: string,
+    private readonly fsImpl: BenchmarkFs,
+    opts: { maxEntries?: number } = {},
+  ) {
+    // Bounded memory: at most maxEntries records retained (oldest evicted
+    // first, insertion order — deterministic). The disk file stays
+    // append-only; reload keeps the most recent tail of the log.
+    const cap = opts.maxEntries ?? 1024;
+    this.maxEntries = Number.isFinite(cap) ? Math.max(16, Math.min(65_536, Math.floor(cap))) : 1024;
+  }
+
+  /** Load history once; corrupt lines are skipped and counted, never fatal. */
+  async init(): Promise<{ checkpoints: number; corruptLines: number }> {
+    if (this.loaded) return this.stats();
+    this.loaded = true;
+    const raw = await this.fsImpl.readFile(this.filePath).catch(() => null);
+    if (raw) {
+      const parsed: CheckpointRecord[] = [];
+      for (const line of raw.split('\n')) {
+        if (line.length === 0) continue;
+        try {
+          parsed.push(validateCheckpointRecord(JSON.parse(line)));
+        } catch {
+          this.corruptLines++;
+        }
+      }
+      // Bounded load: keep only the most recent tail of the append-only log.
+      this.records.push(...parsed.slice(-this.maxEntries));
+    }
+    return this.stats();
+  }
+
+  private async persist(record: CheckpointRecord): Promise<void> {
+    this.records.push(record);
+    if (this.records.length > this.maxEntries) {
+      // Bounded memory: drop the oldest record (insertion order is
+      // deterministic; last-write-wins replay keeps the latest per key).
+      this.records.shift();
+    }
+    const line = JSON.stringify(record) + '\n';
+    this.queue = this.queue
+      .then(async () => {
+        await this.fsImpl.mkdir(this.dirOf());
+        await this.fsImpl.appendFile(this.filePath, line);
+      })
+      .catch(() => {
+        // Fail open: in-memory evidence retained, disk write dropped.
+      });
+    return this.queue;
+  }
+
+  /** Append one checkpoint record (validated, bounded). */
+  async record(input: {
+    taskId: string;
+    stepIndex: number;
+    artifactRefs?: string[];
+    /** v1.3.1 (IMP-R §5): ref → content-digest pairs (bounded). */
+    artifactHashes?: Array<{ ref: string; hash: string }>;
+    /** v1.3.1 (IMP-R §5): whether the step's real side effects were registered. */
+    sideEffectsRegistered?: boolean;
+    status?: CheckpointStatus;
+    updatedAt?: number;
+  }): Promise<CheckpointRecord> {
+    const full: CheckpointRecord = {
+      schemaVersion: 1,
+      kind: 'checkpoint',
+      taskId: input.taskId,
+      stepIndex: input.stepIndex,
+      artifactRefs: [...(input.artifactRefs ?? [])],
+      ...(input.artifactHashes !== undefined
+        ? { artifactHashes: input.artifactHashes.map((p) => ({ ref: p.ref, hash: p.hash })) }
+        : {}),
+      ...(input.sideEffectsRegistered !== undefined
+        ? { sideEffectsRegistered: input.sideEffectsRegistered === true }
+        : {}),
+      status: input.status ?? 'active',
+      updatedAt: input.updatedAt ?? Date.now(),
+    };
+    validateCheckpointRecord(full);
+    await this.persist(full);
+    return full;
+  }
+
+  /** Current records for a task (append order). */
+  recordsFor(taskId: string): CheckpointRecord[] {
+    return this.records.filter((r) => r.taskId === taskId);
+  }
+
+  /** Resume plan computed from the REAL current store state (pure read). */
+  resumePlan(taskId: string): ResumePlan {
+    return planResumeFromRecords(taskId, this.records);
+  }
+
+  /**
+   * v1.3.1 (IMP-R §5): resume with REAL-state re-check — the caller supplies
+   * the CURRENT artifact digests it measured; every recorded hash must still
+   * match for a completed step to be reported resumable (hashCheck
+   * 'verified'). Pure read; never mutates state, never repeats side effects.
+   */
+  resume(taskId: string, currentArtifactHashes?: Record<string, string>): ResumePlan {
+    return planResumeFromRecords(taskId, this.records, currentArtifactHashes);
+  }
+
+  stats(): { checkpoints: number; corruptLines: number } {
+    return { checkpoints: this.records.length, corruptLines: this.corruptLines };
+  }
+
+  async flush(): Promise<void> {
+    await this.queue.catch(() => undefined);
+  }
+
+  private dirOf(): string {
+    const idx = this.filePath.lastIndexOf('/');
+    return idx > 0 ? this.filePath.slice(0, idx) : '.';
+  }
+}

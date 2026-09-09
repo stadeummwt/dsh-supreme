@@ -84,6 +84,12 @@
     # verifier-PASS evidence are routed with this FIXED downweight factor
     # (0.5 halves the score). 1 disables. Deterministic, no ML.
     unscoredEvidenceWeight: 0.5
+    # v1.3.1 (IMP-R) outcome-routing keys — LAB demo keeps everything at its
+    # behavior-preserving default: the fast path stays OFF (its fanout-0
+    # direct-routing demo is a production posture, see the supreme fragment),
+    # bounds/circuit/class-aware scoring inherit their documented defaults.
+    fastPath:
+      enabled: false
 
 - id: supreme-verifier
   config:
@@ -102,14 +108,21 @@
 - id: supreme-workflow-policy
   config:
     maxConcurrentAgents: 4
-    # v1.3 A2A + overreach demo: one DECLARED directed edge; contacts outside
-    # the graph are audited (`a2a_contact`), LOG_ONLY never blocks. Delegations
+    # v1.3 A2A + overreach demo: one DECLARED directed edge; contacts inside
+    # the graph pass. v1.3.1 demo posture: agentContactPolicy DENY — contacts
+    # OUTSIDE the graph are blocked pre-fact at tools/pre-execute (in LOG_ONLY
+    # they are only audited). Registry-first identity (FIX-D): only tools in
+    # the trusted registry (+ this add-only extension) are inspected; the
+    # `desk_pager` entry demonstrates the extension, ordinary tools whose
+    # arguments merely contain `target`/`to` are never touched. Delegations
     # above the MEDIUM ceiling or touching blocked paths are audited as
     # `overreach_suspected` (labels/globs only, never path values).
-    agentContactPolicy: LOG_ONLY
+    agentContactPolicy: DENY
     allowedContacts:
       - from: orchestrator
         to: researcher
+    commsToolNames:
+      - desk_pager
     maxRiskLevel: MEDIUM
     approvalRequiredFor:
       - DESTRUCTIVE_OPS

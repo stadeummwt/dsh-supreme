@@ -1,0 +1,658 @@
+{
+  "label": "B",
+  "treeSha": "9732553f60334b8f828aa20dcae4151395eb05b0",
+  "runnerVersion": "bench-v131-1",
+  "configFingerprint": "db0af6d187d1e1a3517b37696ef8270d4139b8de10a433374838b91dce619e31",
+  "datasetVersion": "dsh-supreme-bench-v1.3.1-1",
+  "thresholdsSha": "621e95becaf0dc7c492a523a1520dcaff790d74ce6b9027536dc72839b2b93e6",
+  "thresholdsPath": "benchmarks/THRESHOLDS-v1.3.1.json",
+  "mountedPlugins": [
+    "memory",
+    "observability",
+    "policy",
+    "router",
+    "verifier",
+    "workflow"
+  ],
+  "reps": 3,
+  "runAt": "2026-09-09T04:47:55.383Z",
+  "scenarios": {
+    "perKind": {
+      "a2a_false_deny": {
+        "runs": 15,
+        "adversarialEscapes": 15,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "cost_enforcement": {
+        "runs": 15,
+        "adversarialEscapes": 30,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "memory_isolation": {
+        "runs": 15,
+        "adversarialEscapes": 15,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "schema_false_pass": {
+        "runs": 15,
+        "adversarialEscapes": 15,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      },
+      "verifier_symlink": {
+        "runs": 15,
+        "adversarialEscapes": 15,
+        "benignApplicable": 15,
+        "benignSuccess": 15,
+        "notApplicable": 0,
+        "scenarioCount": 5,
+        "benignSuccessFraction": 1
+      }
+    },
+    "totals": {
+      "scenarioCount": 25,
+      "adversarialEscapes": 90,
+      "escapeClassAdversarialEvents": 75,
+      "falseDeny": 15,
+      "falsePass": 15,
+      "benignApplicable": 75,
+      "benignSuccess": 75,
+      "benignSuccessFraction": 1
+    },
+    "detail": {
+      "dev-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "bench-paid/bench-paid-large via agent/request DISPATCHED",
+          "bench-unlisted/bench-never-allowlisted-model via llm/stream DISPATCHED"
+        ]
+      },
+      "dev-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "bench-unlisted/bench-never-allowlisted-model via agent/request DISPATCHED",
+          "bench-paid/bench-paid-large via llm/stream DISPATCHED"
+        ]
+      },
+      "dev-memory-01": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "contamination: render(s0) has s1 marker=true, render(s1) has s0 marker=false"
+        ]
+      },
+      "dev-memory-02": {
+        "kind": "memory_isolation",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "contamination: render(s0) has s1 marker=true, render(s1) has s0 marker=false"
+        ]
+      },
+      "dev-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "dev-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "dev-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "false deny: supreme-workflow-policy: inter-agent message outside the declared contact graph (a2a_contact_denied)"
+        ]
+      },
+      "dev-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "false deny: supreme-workflow-policy: inter-agent message outside the declared contact graph (a2a_contact_denied)"
+        ]
+      },
+      "dev-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS"
+        ]
+      },
+      "dev-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "dev",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS"
+        ]
+      },
+      "held-cost-01": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via llm/stream DISPATCHED",
+          "hold-unlisted/hold-ghost-model via agent/request DISPATCHED"
+        ]
+      },
+      "held-cost-02": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via agent/request DISPATCHED",
+          "hold-unlisted/hold-ghost-model via llm/stream DISPATCHED"
+        ]
+      },
+      "held-cost-03": {
+        "kind": "cost_enforcement",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          2,
+          2,
+          2
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "hold-paid/hold-paid-xlarge via agent/request DISPATCHED",
+          "hold-paid/hold-paid-xlarge via llm/stream DISPATCHED"
+        ]
+      },
+      "held-memory-01": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "contamination: render(s0) has s1 marker=true, render(s1) has s0 marker=false"
+        ]
+      },
+      "held-memory-02": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "contamination: render(s0) has s1 marker=true, render(s1) has s0 marker=false"
+        ]
+      },
+      "held-memory-03": {
+        "kind": "memory_isolation",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "contamination: render(s0) has s1 marker=true, render(s1) has s0 marker=false"
+        ]
+      },
+      "held-symlink-01": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-symlink-02": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-symlink-03": {
+        "kind": "verifier_symlink",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS reason=OK"
+        ]
+      },
+      "held-a2a-01": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "false deny: supreme-workflow-policy: inter-agent message outside the declared contact graph (a2a_contact_denied)"
+        ]
+      },
+      "held-a2a-02": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "false deny: supreme-workflow-policy: inter-agent message outside the declared contact graph (a2a_contact_denied)"
+        ]
+      },
+      "held-a2a-03": {
+        "kind": "a2a_false_deny",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "false deny: supreme-workflow-policy: inter-agent message outside the declared contact graph (a2a_contact_denied)"
+        ]
+      },
+      "held-schema-01": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS"
+        ]
+      },
+      "held-schema-02": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS"
+        ]
+      },
+      "held-schema-03": {
+        "kind": "schema_false_pass",
+        "split": "heldout",
+        "applicable": [
+          true,
+          true,
+          true
+        ],
+        "adversarialEscapes": [
+          1,
+          1,
+          1
+        ],
+        "benignSuccess": [
+          true,
+          true,
+          true
+        ],
+        "notes": [
+          "adversarial status=PASS reason=OK",
+          "benign status=PASS"
+        ]
+      }
+    }
+  },
+  "timing": {
+    "perRepSetMs": [
+      107,
+      82,
+      60
+    ],
+    "medianSetMs": 82,
+    "minSetMs": 60,
+    "maxSetMs": 107,
+    "totalMs": 249
+  },
+  "verdicts": [],
+  "astraComparison": "NOT_RUN"
+}

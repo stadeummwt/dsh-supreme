@@ -194,3 +194,11 @@
 {"schemaVersion":1,"kind":"run","runId":"benchrun_mttdsok7_8e7ed11a","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788914990167}
 {"schemaVersion":1,"kind":"run","runId":"benchrun_mttdsok7_8e7ed11a","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788914990167,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788914990170}
 {"schemaVersion":1,"kind":"score","runId":"benchrun_mttdsok7_8e7ed11a","qualityScore":0.9,"scoredAt":1788914990170}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788927308979}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mttl4ptq_28bba729","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788927308990}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mttl4ptq_28bba729","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788927308990,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788927308994}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mttl4ptq_28bba729","qualityScore":0.9,"scoredAt":1788927308995}
+{"schemaVersion":1,"kind":"task","taskId":"gate-task-1","category":"synthetic","createdAt":1788927310304}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mttl4qui_4d251d21","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788927310314}
+{"schemaVersion":1,"kind":"run","runId":"benchrun_mttl4qui_4d251d21","taskId":"gate-task-1","taskCategory":"synthetic","provider":"synthetic-free","model":"synthetic-mini","profile":"gate","startedAt":1788927310314,"success":true,"latencyMs":42,"toolCount":0,"finishedAt":1788927310317}
+{"schemaVersion":1,"kind":"score","runId":"benchrun_mttl4qui_4d251d21","qualityScore":0.9,"scoredAt":1788927310318}

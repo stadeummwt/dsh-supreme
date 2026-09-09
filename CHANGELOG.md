@@ -2,6 +2,70 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.3.1 — Review-hardening (branch `review/v1.3.1`)
+
+Response to an external v1.3.0 review: five findings **reproduced before
+patching** (failing test on the original code), fixed, and proven, plus three
+improvement areas. Per-issue evidence — reproduction commands, root causes,
+before/after outputs, remaining limits, rollback (bash + PowerShell) — in
+[`docs/REVIEW-FIXES-v1.3.1.md`](./docs/REVIEW-FIXES-v1.3.1.md). No upstream
+change (`d347e703` untouched, patches=0); no new dependencies; no gate
+weakened.
+
+**Fixes (each proven by a standalone verifier, 465 probes total):**
+- **FIX-A (P1)** cost policy now enforced PRE-dispatch on LLM requests:
+  `agent/request` consult + `llm/stream` backstop (pinned seam, now in
+  `OFFICIAL_SEAMS` with citation); deny throws before `next()` → zero adapter
+  calls; UNKNOWN/unlisted models denied in production RM0; LAB exception
+  contract unchanged; free-claim evidence metadata (source/checkedAt/status).
+  → `V131_COST_FIX_VERIFIED` (37 probes).
+- **FIX-B (P1)** verifier `allowedRoots`: native realpath validation of roots
+  AND targets before any content read; traversal, sibling-prefix, missing
+  files rejected; check-vs-open race reduced and documented (NOT race-proof);
+  Linux tested, Windows untested. → `V131_VERIFIER_FIX_VERIFIED` (43).
+- **FIX-C (P1)** memory isolation: selections bound to (session, task);
+  unknown identity → empty section (no latest-fallback); bounded LRU
+  (cap 128) + release on task end/cancel/dispose; shared project knowledge
+  stays opt-in. → `V131_MEMORY_FIX_VERIFIED` (88).
+- **FIX-D (P2)** A2A contact guard no longer misfires on ordinary tools:
+  trusted comms-tool registry (default set + `commsToolNames`) gates recipient
+  extraction; post-fact emits remain detect-only; malformed comms calls get an
+  explicit reason. → `V131_A2A_FIX_VERIFIED` (63).
+- **FIX-E (P2)** JSON Schema validation no longer false-PASSes:
+  deterministic validator enforces `additionalProperties` (bool+schema),
+  items, composition, bounds; unsupported keywords → `ERROR`/`UNAVAILABLE`
+  with a reason, never silent downgrade; remote `$ref` → `UNAVAILABLE`.
+
+**Improvements (§3 of the review):**
+- **Evidence-bound verification** (IMP-V): PASS records carry
+  taskId/attempt/artifact-hash; stale evidence invalidated on artifact change;
+  HIGH-risk closes need current evidence; verifier unavailable → explicit
+  `UNAVAILABLE`; confidence/trace length can never substitute evidence.
+  → `V131_EVIDENCE_BINDING_VERIFIED` (82).
+- **Outcome-based routing + fast path/recovery** (IMP-R): per-(candidate,
+  taskClass) scoring = freshness-decayed Wilson lower bound (formula
+  documented); outcome circuit breaker (consecutive failures → open, half-open
+  probe) fed by `agent/request-error`; deterministic failure classification
+  (rate_limit/timeout/credential/verifier); bounds (`maxRetries` 3,
+  `maxFanout` 4, `wallClockBudgetMs` 0=off); cross-provider fallback plan
+  restricted to verified-free candidates; deterministic fast path skips
+  fanout for simple tasks; checkpoint/resume gated on current artifact hashes
+  (no side-effect repetition); `task_latency` event (durations only). Also
+  fixed dead wiring: `classSamples()` was never exposed by the benchmark
+  service, so class-aware scoring was inert at adapter level.
+  → `V131_OUTCOME_ROUTING_VERIFIED` (80).
+- **Failure injection & regression harness** (IMP-T): timeout, provider
+  unavailable, corrupted evidence, cancellation scenarios + adversarial/benign
+  guard pairs + audit-metadata canary bounds; deterministic fixtures under
+  `tests/fixtures/`. → `V131_FAILURE_INJECTION_VERIFIED` (72).
+
+**Suite:** 78 → **101 Level-A checks** (policy 17, observability 7,
+benchmark 11, router 23, verifier 11, memory 13, workflow 19), all PASS;
+full real-loader suite **101/101 + 5/5 boots → `VERDICT COMPLETE`**
+(boots 51–986 ms measured; sentinel leaks 0; router ≈ 0.038 ms/1k).
+New script: `bun run v131:verify` (all 7 markers). Shipped `dist/` rebuilt
+for the six touched plugins with the exact CI command.
+
 ## 1.3.0 — ASTRA-hardening (v1.3)
 
 Seven deterministic hardening features from the ASTRA-1 backlog
