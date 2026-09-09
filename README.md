@@ -1,16 +1,23 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-dark.svg">
+    <img alt="DSH SUPREME — the governance layer for DeepSeek Harness: seven policy plugins, one bundle install, zero upstream patches, every claim executable" src="./assets/hero-light.svg" width="100%">
+  </picture>
+</p>
+
 <div align="center">
 
 # 🛡️ DSH SUPREME
 
 ### The governance layer for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 
-**Seven policy plugins · one bundle install · zero upstream patches · every claim executable**
-
 *"ECC gives your harness breadth. Supreme gives it a conscience."*
 
 [![CI](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml/badge.svg)](https://github.com/stadeummwt/dsh-supreme/actions/workflows/ci.yml)
-![suite](https://img.shields.io/badge/suite-78%2F78%20%E2%9C%94%205%2F5%20boots-brightgreen)
-![E2E](https://img.shields.io/badge/E2E-8%20verdicts%20green-success)
+![suite](https://img.shields.io/badge/suite-101%2F101%20%E2%9C%94%205%2F5%20boots-brightgreen)
+![probes](https://img.shields.io/badge/E2E%20probes-465%20%2B%20184-8A2BE2)
+![verdicts](https://img.shields.io/badge/verdict%20markers-14%20green-success)
+![bench](https://img.shields.io/badge/benchmark%20A%2FB%2FC-0%20escape-brightgreen)
 ![upstream](https://img.shields.io/badge/upstream-d347e703908d%20%7C%20patches%200-blue)
 ![leaks](https://img.shields.io/badge/secret%20sentinel%20leaks-0-success)
 ![schemas](https://img.shields.io/badge/JSON%20schemas-3%20published-8A2BE2)
@@ -20,9 +27,27 @@
 
 **Install** · `dsh plugin --profile <your-profile> add github:stadeummwt/dsh-supreme`
 
-[Quick install](#-60-second-install) · [Why Supreme](#-why-supreme) · [The seven plugins](#-the-seven-governance-plugins) · [Proof wall](#-proof-wall--every-verdict-runnable) · [v1.3 features](#-v13-astra-hardening-features) · [v1.2 features](#-v12-governance-features) · [Docs](#-documentation-map)
+[At a glance](#-at-a-glance) · [Why Supreme](#-why-supreme) · [Install](#-60-second-install) · [The seven plugins](#-the-seven-governance-plugins) · [Proof wall](#-proof-wall--every-verdict-runnable) · [Security](#-security-guarantees) · [v1.3.1 fixes](#-v131-review-hardening) · [Benchmarks](#-benchmarks-v131) · [Docs](#-documentation-map) · [FAQ](#-faq)
 
 </div>
+
+---
+
+## 📊 At a glance
+
+Every row below is re-runnable — see the [proof wall](#-proof-wall--every-verdict-runnable).
+
+| Metric | Value |
+|---|---|
+| Full suite | **101/101** Level-A checks · **5/5** real-loader boots · `VERDICT COMPLETE` |
+| v1.3.1 review probes | **465/465** across 7 verifiers |
+| v1.3 E2E probes | **184/184** (policy 85 · workflow 82 · routing 17) |
+| Verdict markers | **14 green** (`suite` · `v131:verify` · `v13:verify` · `bundle:verify` · `composition:verify` · `v12:verify` · `v3:verify`) |
+| Policy benchmark A/B/C | **0 escapes** after patch · benign **75/75** · Astra `NOT_RUN` (honest label) |
+| Router latency | ≈ **0.02–0.04 ms / 1k** decisions · RM0-first |
+| Secret sentinel leaks | **0** every run |
+| Upstream patches | **0** — pinned `d347e703908d`, worktree clean |
+| License | MIT |
 
 ---
 
@@ -103,6 +128,36 @@ creep without a proven blocker.
 | 5 | [`supreme-verifier`](./src/plugins/supreme-verifier/) | `supremeVerifier` | Deterministic validator registry (exact-text · regex · JSON · file · command). **Evidence > model self-confidence.** |
 | 6 | [`supreme-memory-policy`](./src/plugins/supreme-memory-policy/) | `supremeMemoryPolicy` | Memory *selection policy*: confidence floor, injection cap, relevance ranking, bounded append-only note ledger (credential-bearing notes rejected at admission). |
 | 7 | [`supreme-workflow-policy`](./src/plugins/supreme-workflow-policy/) | `supremeWorkflowPolicy` | When/how `ctx.subagents` / `ctx.workflowEngine` may run: limits, degradation ladder, glob **path scoping** (blocked beats allowed), verifier-gated close for HIGH-risk tasks, **A2A contact graph** + **overreach audit**. |
+
+```mermaid
+flowchart TB
+    subgraph SUP["Supreme plugin layer — project-owned, frozen 7"]
+        P["supreme-policy"]
+        O["supreme-observability"]
+        BM["supreme-benchmark"]
+        R["supreme-router"]
+        V["supreme-verifier"]
+        M["supreme-memory-policy"]
+        W["supreme-workflow-policy"]
+    end
+    subgraph CORE["DSH core — pinned upstream · never modified"]
+        C["ctx.llm · ctx.sessions · ctx.systemPrompt · ctx.tokenMeter · ctx.credentials · ctx.subagents · ctx.workflowEngine"]
+    end
+    P --> C
+    O --> C
+    BM --> C
+    R --> C
+    V --> C
+    M --> C
+    W --> C
+    P -. consults .-> V
+    P -. consults .-> R
+    P -. consults .-> W
+    O -. optional .-> V
+    O -. optional .-> W
+    BM -. history .-> R
+    V -. evidence .-> W
+```
 
 Four support plugins (`supreme-minimal-probe`, `supreme-boot-probe`,
 `supreme-gate-driver`, `supreme-fake-llm`) exist **only** as test fixtures for
@@ -189,6 +244,26 @@ in [`docs/REVIEW-FIXES-v1.3.1.md`](./docs/REVIEW-FIXES-v1.3.1.md).
 
 Run it: `bun run v131:verify` (7 markers, 465 probes) — then read the doc before trusting this table.
 
+## 📈 Benchmarks v1.3.1
+
+Policy-enforcement delta across three labels — same runner, same datasets,
+thresholds frozen **before** evaluation, dev + held-out inputs disjoint:
+
+| Label | Setup | Result |
+|---|---|---|
+| **A** | harness **without** Supreme | **30** cost-policy bypasses |
+| **B** | Supreme **v1.3.0** (pre-review-fix) | **90** escapes (cost 30 · memory 15 · symlink 15 · A2A false-deny 15 · schema false-pass 15) |
+| **C** | Supreme **v1.3.1** | **0 escapes — all kinds** · benign pass **75/75** · overhead ≈ 10 ms/set (median 93 vs 82 ms) |
+
+All 6 thresholds PASS. Safety regressions (benign denials) block promotion.
+
+- Method, limits and cleanup record: [`benchmarks/BENCH-v1.3.1.md`](./benchmarks/BENCH-v1.3.1.md)
+- Thresholds-then-evaluate: [`benchmarks/THRESHOLDS-v1.3.1.json`](./benchmarks/THRESHOLDS-v1.3.1.json) · raw runs: [`benchmarks/runs/`](./benchmarks/runs/)
+- Re-run yourself: `bun real/bench-v131.mjs --label C --reps 1` → `BENCH_C_THRESHOLDS_PASS`
+- **Astra (GPT-6): `NOT_RUN`** — no verified public evaluation data; never
+  fabricated ([research note](./research/gpt6-astra-2026-09.md)). This is a
+  policy-enforcement benchmark, **not** a model-quality ranking.
+
 ## 🧬 v1.3 ASTRA-hardening features
 
 Seven deterministic hardening features from the ASTRA-1 backlog
@@ -199,7 +274,8 @@ adapters). The shared label contract `CapabilitySignal
 { capabilityClass?, cotVisibility? }` is exported by `supreme-policy` and
 carried (never enforced) by the router.
 
-### supreme-policy — four features
+<details>
+<summary><b>supreme-policy — four features (config table)</b></summary>
 
 | Config key | Default | Meaning |
 |---|---|---|
@@ -210,14 +286,20 @@ carried (never enforced) by the router.
 | `capabilityClassGate` | `'OFF'` | Gate requests carrying `capabilityClass`: `AUDIT` records, `ENFORCE` denies unsanctioned classes. Unlabeled requests always pass untouched. |
 | `sanctionedCapabilityClasses` / `labCapabilityClassAllowlist` | `[]` / `[]` | Sanction lists; the LAB allowlist is additive and binds ONLY on the LAB floor. No implicit `ROUTINE` exemption — a self-declared label can only RESTRICT, never grant. |
 
-### supreme-workflow-policy — two features
+</details>
+
+<details>
+<summary><b>supreme-workflow-policy — two features (config table)</b></summary>
 
 | Config key | Default | Meaning |
 |---|---|---|
 | `agentContactPolicy` / `allowedContacts` | `'LOG_ONLY'` / `[]` | A2A contact graph: directed `{ from, to }` edges of agent ids/roles (empty = inert). Out-of-graph spawn/message contacts are audited as `a2a_contact`; under `'DENY'` the pre-fact `tools/pre-execute` waterfall refuses with `a2a_contact_denied`. Emit-mode seams are DETECT-only. |
 | `maxRiskLevel` / `approvalRequiredFor` | `'HIGH'` / `[]` | Overreach audit: delegations above the risk ceiling, listed task classes without an approval flag, or paths outside the v1.2 scope are audited as `overreach_suspected` (labels, levels, flags, config globs — never content). |
 
-### supreme-router + supreme-benchmark — anti-sandbagging
+</details>
+
+<details>
+<summary><b>supreme-router + supreme-benchmark — anti-sandbagging (config table)</b></summary>
 
 | Config key | Plugin | Default | Meaning |
 |---|---|---|---|
@@ -225,7 +307,10 @@ carried (never enforced) by the router.
 | `unscoredEvidenceWeight` | router | `1` | FIXED multiplicative downweight for unevidenced benchmark claims (e.g. `0.5` halves such scores); ids + factors recorded on the decision + `unscored_evidence` events (ids only). `1` = off, back-compat. |
 | — | router | — | Carries `capabilityClass` / `cotVisibility` labels from candidates onto the selected `RouteDecision` (carrier, not enforcer). |
 
-### Composition fragments (v1.3 posture)
+</details>
+
+<details>
+<summary><b>Composition fragments (v1.3 posture)</b></summary>
 
 | Fragment | v1.3 keys |
 |---|---|
@@ -233,6 +318,8 @@ carried (never enforced) by the router.
 | `standard` | `enableEncodingScan: true` + `capabilityClassGate: AUDIT` — audit-only, cannot block |
 | `supreme` | same audit-only policy posture + `requireEvidenceForScores: true` + workflow keys pinned at behavior-preserving defaults |
 | `lab` | enforcing demo: `capabilityClassGate: ENFORCE` + `labCapabilityClassAllowlist`, `cotVisibilityProfiles` + `riskGatedCoT`, declared contact graph + `maxRiskLevel: MEDIUM`, `unscoredEvidenceWeight: 0.5` |
+
+</details>
 
 ---
 
@@ -242,7 +329,8 @@ Deterministic. No ML. No new runtime deps. Every feature binds to a **real
 pinned upstream seam** and ships with engine checks + boot-level proof
 (`bun run v12:verify`).
 
-### supreme-policy — unicode taint denial + CoT presence gate
+<details>
+<summary><b>supreme-policy — unicode taint denial + CoT presence gate</b></summary>
 
 Upstream freezes tool arguments after logging (wrappers may change only
 `exec.signal`), so the enforceable host-side posture is **detect → audit →
@@ -257,7 +345,10 @@ tool output):
 | `taintPolicy` | `LOG_ONLY` | `DENY` refuses the call before dispatch |
 | `reasoningTracePolicy` | `OFF` | `AUDIT` records `cot_missing` when an assistant message carried no reasoning trace; `ENFORCE` additionally denies that session's tool calls (`ENFORCE` refused on the CORE floor) |
 
-### supreme-router — RM0-first + effort pacing
+</details>
+
+<details>
+<summary><b>supreme-router — RM0-first + effort pacing</b></summary>
 
 | Config key | Default | Meaning |
 |---|---|---|
@@ -265,14 +356,20 @@ tool output):
 | `effortPacing.enabled` | `false` | deterministic `costClass → reasoningEffort` mapping over the pinned `agent/request` seam (pinned DeepSeek levels: `off / low / high / max`) |
 | `effortPacing.escalateOnVerifierFail` | `true` | one-step escalation (`low → high`) driven **only** by verifier FAIL evidence via `reportVerifierOutcome()` — never model self-confidence; PASS recovers |
 
-### supreme-workflow-policy — surgical path scope + verifier-gated close
+</details>
+
+<details>
+<summary><b>supreme-workflow-policy — surgical path scope + verifier-gated close</b></summary>
 
 | Config key | Default | Meaning |
 |---|---|---|
 | `allowedPaths` / `blockedPaths` | `[]` / `[]` | zero-dependency glob scope for delegations (`**` crosses segments, `*`/`?` stay in-segment); **blocked always wins**; empty allowlist = unrestricted |
 | `requireVerifierPassOnClose` | `false` | HIGH-risk tasks may only close with recorded verifier PASS evidence |
 
-### supreme-memory-policy — bounded ledger + instinct-style gates
+</details>
+
+<details>
+<summary><b>supreme-memory-policy — bounded ledger + instinct-style gates</b></summary>
 
 | Config key | Default | Meaning |
 |---|---|---|
@@ -281,13 +378,14 @@ tool output):
 | `maxInjected` | `6` | hard cap per selection |
 | `relevanceRanking` | `true` | deterministic task-token-overlap ranking before priority (counting, not ANN) |
 
-### supreme-benchmark — provenance binding
+</details>
+
+<details>
+<summary><b>supreme-benchmark — provenance binding + published schemas</b></summary>
 
 Run records accept `commitHash` (40-hex sha or `UNAVAILABLE`) and `irVersion`
 — malformed values are rejected by validation, so routing evidence stays bound
 to the code that produced it.
-
-### Published schemas + audit suite
 
 - [`schemas/suite-report.schema.json`](./schemas/suite-report.schema.json) ·
   [`benchmark-record.schema.json`](./schemas/benchmark-record.schema.json) ·
@@ -297,6 +395,8 @@ to the code that produced it.
 - Suite also runs **config-key hygiene** (every shipped YAML row validated
   against the plugin's real zod schema — the silent-strip trap stays closed),
   **pinned-ref** scan, and the **six-surface security audit**.
+
+</details>
 
 ---
 
@@ -477,7 +577,8 @@ bun run suite:keyless:ci # keyless with CI-friendly exit code: 0 iff verdict is 
 The suite exits `0` only when every mandatory gate passes (`verdict:
 COMPLETE`). Any failure prints the exact blocking gates.
 
-### HTTP API (dashboard projection — dev/LAB only)
+<details>
+<summary><b>HTTP API (dashboard projection — dev/LAB only)</b></summary>
 
 The Next.js app exposes a thin, read-mostly projection over the suite. It owns
 **no runtime state**; runs live in an in-memory store (latest 20 runs) and
@@ -493,6 +594,8 @@ unless `SUPREME_ENABLE_SUITE=1`).
 
 Implementation: `src/app/api/supreme/**` + `src/lib/supreme-suite.ts`
 (project app, outside `dsh-supreme/`).
+
+</details>
 
 ---
 
@@ -514,7 +617,8 @@ owner chooses to make.
 
 ---
 
-## 📁 Directory layout
+<details>
+<summary><b>📁 Directory layout</b></summary>
 
 ```text
 dsh-supreme/                      (repo root as published)
@@ -525,7 +629,9 @@ dsh-supreme/                      (repo root as published)
 ├── SOURCE-OF-TRUTH.md         ← upstream integrity record (historical + current)
 ├── LICENSE                    ← MIT (v1.2)
 ├── package.json               # suite/boot/build/verify scripts (zod + yaml deps)
+├── assets/                    # README hero/footer SVGs (self-contained, dark + light)
 ├── schemas/                   # published JSON Schemas (suite report, benchmark, ledger)
+├── benchmarks/                # v1.3.1 policy-enforcement benchmark (runner, datasets, thresholds, runs)
 ├── .github/workflows/ci.yml   # keyless + full suite on push/PR (v1.2)
 ├── config/
 │   ├── supreme-minimal.cordis.yml   # bare-Loader probe gate
@@ -547,6 +653,10 @@ dsh-supreme/                      (repo root as published)
 │   ├── v13-policy-verify.mjs  # E2E: v1.3 policy features, 85 probes (V13_POLICY_E2E_COMPLETE)
 │   ├── v13-workflow-verify.mjs# E2E: v1.3 A2A + overreach, 82 probes (V13_WORKFLOW_E2E_COMPLETE)
 │   ├── v13-routing-verify.mjs # E2E: v1.3 labels + anti-sandbagging, 17 probes (V13_ROUTING_E2E_COMPLETE)
+│   ├── v131-*.mjs             # E2E: 7 review-fix verifiers — cost-enforce · verifier-hardening ·
+│   │                          # memory-isolation · a2a-falsepositive · evidence-binding ·
+│   │                          # outcome-routing · failure-injection (465 probes total)
+│   ├── bench-v131.mjs         # benchmark runner (--label A|B|C, --reps, --out)
 │   └── build-batched.sh       # memory-batched official upstream build
 ├── dist/plugins/<name>/index.mjs    # bun-built ESM bundles loaded by the real Loader
 ├── data/
@@ -562,11 +672,15 @@ dsh-supreme/                      (repo root as published)
 │   ├── suite/                 # runner.ts + cli.ts + engine-checks.ts + config-hygiene.ts
 │   │                          # + surface-audit.ts + schema-contract.ts + harness.ts
 │   └── harness/cordis-mini/   # Level-A lifecycle FIXTURE only (never cited as DSH proof)
+├── research/                  # ECC dissection + ASTRA-1 + README v2 research (evidence base)
 └── docs/
+    ├── REVIEW-FIXES-v1.3.1.md # per-issue evidence for the v1.3.1 review hardening
     ├── architecture/ARCHITECTURE.md
     ├── decisions/ADR-0000 … ADR-0007
     └── runbooks/              # install, build, test, boot-*, upgrade-pinned-dsh, rollback
 ```
+
+</details>
 
 ---
 
@@ -578,7 +692,9 @@ dsh-supreme/                      (repo root as published)
 | [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) | Layer map, verified real-API evidence table, event seams, composition layering |
 | [`docs/decisions/`](./docs/decisions/) | ADR-0000 (fixture history) + ADR-0001…0007 (one per major decision) |
 | [`docs/runbooks/`](./docs/runbooks/) | install, build, test, boot-core/standard/supreme/lab, upgrade-pinned-dsh, rollback |
-| [`research/`](./research/) | ECC dissection (253,948★) + v3 plan review — the data behind the v1.2 roadmap |
+| [`docs/REVIEW-FIXES-v1.3.1.md`](./docs/REVIEW-FIXES-v1.3.1.md) | The 5 review findings: reproduction, root cause, fix, before/after, limits, rollback |
+| [`benchmarks/BENCH-v1.3.1.md`](./benchmarks/BENCH-v1.3.1.md) | Benchmark method, thresholds, results, cleanup record |
+| [`research/`](./research/) | ECC dissection (253,948★) + ASTRA-1 dissection + v3 plan review + README v2 research |
 | [`SOURCE-OF-TRUTH.md`](./SOURCE-OF-TRUTH.md) | Upstream integrity record (historical + current) |
 | Per-plugin READMEs | `src/plugins/<name>/README.md` — purpose, config tables, contracts, security boundaries |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Version history with evidence markers per release |
@@ -587,43 +703,71 @@ dsh-supreme/                      (repo root as published)
 
 ## ❓ FAQ
 
-**Q: Does Supreme modify DeepSeek Harness?**
+<details open>
+<summary><b>Does Supreme modify DeepSeek Harness?</b></summary>
+
 No. The pinned upstream worktree stays pristine — `UPSTREAM_CORE_MODIFIED =
 NO`, patch count `0`, re-verified on every suite run. Supreme is an ordinary
 Cordis plugin layer that consumes official services and event seams.
 
-**Q: Is any of this AI-powered?**
+</details>
+
+<details open>
+<summary><b>Is any of this AI-powered?</b></summary>
+
 None. Every gate is deterministic code — counting, glob matching, string
 comparison, zod validation. That's why the router decides in ~0.02–0.03 ms and why
 results are reproducible on your machine, today.
 
-**Q: Why does `UNKNOWN` cost deny the model?**
+</details>
+
+<details open>
+<summary><b>Why does <code>UNKNOWN</code> cost deny the model?</b></summary>
+
 Because an unclassified route is an unaudited spend path. `supreme-policy`
 treats it as a hard DENY; paid/trial classes require an explicit LAB-only
 override. RM0-first routing then prefers `FREE_CONFIRMED` candidates
 deterministically.
 
-**Q: Can I use just the policy plugin?**
+</details>
+
+<details open>
+<summary><b>Can I use just the policy plugin?</b></summary>
+
 Yes — that's the [`core`](./config/compositions/core.patch.yml) fragment. Or
 [`standard`](./config/compositions/standard.patch.yml) for the daily-driver
 four. Fragments are one-line overlays on your own profile.
 
-**Q: What if my config has a typo or an unknown key?**
+</details>
+
+<details open>
+<summary><b>What if my config has a typo or an unknown key?</b></summary>
+
 The v1.2 suite runs a **config-key hygiene** scan: every shipped YAML row is
 validated against the plugin's real zod schema, so the "boot passes but your
 governance keys were silently stripped" trap (proven live in
 `V3_CONFIG_REVIEW_EVIDENCE`) stays closed.
 
-**Q: Does it work offline / air-gapped?**
+</details>
+
+<details open>
+<summary><b>Does it work offline / air-gapped?</b></summary>
+
 The six-surface audit, taint scanning, ledger and all suite checks are fully
 offline and deterministic. Real boots need the pinned upstream checked out
 locally — no network calls at runtime.
 
-**Q: Why isn't Supreme listed in the dsh-market yet?**
+</details>
+
+<details open>
+<summary><b>Why isn't Supreme listed in the dsh-market yet?</b></summary>
+
 Listing requires a one-file PR to the catalog, and this repo's policy is that
 such PRs are made by the owner, manually (see
 [`distribution/SUBMISSION-GUIDE.md`](./distribution/SUBMISSION-GUIDE.md)).
 Everything else is already prepared.
+
+</details>
 
 ---
 
@@ -634,6 +778,9 @@ Everything else is already prepared.
   fixture and is never cited as DSH proof.
 - Keyless suite verdict is honestly `PARTIAL` (`REAL_BOOT_SKIPPED`) without a
   built pinned upstream — it does not fake completeness.
+- The benchmark measures **policy enforcement** (bypass/escape counts), not
+  model quality or intelligence; the Astra label is `NOT_RUN` by design until
+  verified public data exists.
 - Deferred items (documented, not forgotten): HNSW-style memory indexing and
   Archify-style schema migration stay out of scope for the frozen seven.
 - Router candidates ship empty (zero-by-default): you add models from your own
@@ -641,12 +788,16 @@ Everything else is already prepared.
 
 ---
 
+<p align="center">
+  <img src="./assets/footer-wave.svg" alt="" width="100%">
+</p>
+
 <div align="center">
 
 **Built proof-first. *Bukti sebenar > klaim.***
 
 If Supreme hardened your harness, consider starring the repo — it helps other DSH users find governance tooling.
 
-[⬆ back to top](#️-dsh-supreme)
+[⬆ back to top](#-dsh-supreme)
 
 </div>

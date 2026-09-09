@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="220" viewBox="0 0 1280 220" role="img" aria-label="DSH Supreme — the governance layer for DeepSeek Harness">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#FDF9F3"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="0.5" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <linearGradient id="shieldFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10B981" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#10B981" stop-opacity="0.03"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#0B0F14" stroke-opacity="0.05"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="220" fill="url(#bg)"/>
+  <rect width="1280" height="220" fill="url(#grid)"/>
+  <g transform="translate(640,0)">
+    <path d="M0 22 L36 35 V70 C36 96 20 113 0 124 C-20 113 -36 96 -36 70 V35 Z" fill="url(#shieldFill)" stroke="#059669" stroke-width="2.5"/>
+    <path d="M-14 68 L-3 81 L16 55" fill="none" stroke="#059669" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="640" y="158" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="21" font-weight="600" letter-spacing="6" fill="#374151">THE GOVERNANCE LAYER FOR DEEPSEEK HARNESS</text>
+  <text x="640" y="190" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" letter-spacing="2.5" fill="#6B7280">SEVEN POLICY PLUGINS · ONE BUNDLE INSTALL · ZERO UPSTREAM PATCHES · EVERY CLAIM EXECUTABLE</text>
+  <rect x="0" y="214" width="1280" height="6" fill="url(#accent)"/>
+</svg>

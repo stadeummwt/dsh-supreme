@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="110" viewBox="0 0 1280 110" role="img" aria-label="decorative wave divider">
+  <defs>
+    <linearGradient id="w" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F59E0B" stop-opacity="0.80"/>
+      <stop offset="0.5" stop-color="#34D399" stop-opacity="0.80"/>
+      <stop offset="1" stop-color="#10B981" stop-opacity="0.80"/>
+    </linearGradient>
+  </defs>
+  <path d="M0 60 C 180 110 320 10 520 44 C 700 74 820 14 1000 40 C 1140 60 1220 44 1280 58 L1280 110 L0 110 Z" fill="url(#w)"/>
+  <path d="M0 76 C 200 116 340 30 540 58 C 720 84 860 30 1040 52 C 1160 66 1230 58 1280 68 L1280 110 L0 110 Z" fill="url(#w)" opacity="0.45"/>
+</svg>
