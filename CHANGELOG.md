@@ -2,6 +2,59 @@
 
 All notable changes to DSH Supreme are documented here.
 
+## 1.3.3 — Windows cross-platform hardening & seamless out-of-the-box execution
+
+Follow-up to the v1.3.2 plug-and-play release: live verification on a Windows
+host exposed 3 remaining cross-platform friction points. All three are fixed
+at the root; no upstream change (`d347e703` untouched, patches=0); no new
+dependencies; no gate weakened — the hardening gate now accepts MORE platforms
+without accepting LESS confinement.
+
+**1. `supreme-verifier` path normalization on Windows (`src/plugins/supreme-verifier/engine.ts`):**
+`pathIsAllowed()` compared `resolved.startsWith(root + '/')` — on Windows
+`path.resolve()` emits `\` separators, so valid in-root paths were falsely
+DENIED. The cheap lexical pre-filter now prefers `path.relative()` containment
+when the host supplies it (correct on both POSIX and Windows, and still kills
+sibling-prefix roots like `/root` vs `/root-evil`); the resolve-only fallback
+(shim hosts) accepts either separator. REAL confinement is unchanged —
+`resolveRealConfinement` (fs.realpath) remains the enforcing layer, junctions
+included. 43/43 hardening probes re-verified (`V131_VERIFIER_FIX_VERIFIED`).
+
+**2. Verifier hardening smoke gate is no longer Linux-only
+(`real/v131-verifier-hardening.mjs`):** gate B4 hardcoded
+`process.platform === 'linux'`, so the suite failed itself on win32/darwin
+even though confinement is delegated to node `fs.realpath` (junctions
+included). B4 now accepts `linux | win32 | darwin` and the platform notes
+state the delegation honestly (Windows runtime verification performed on the
+owner's Windows host; repo CI runs Linux).
+
+**3. `real/supreme.mjs` Windows process + upstream discovery:**
+- `run()` defaults `shell: true` on win32 — `bun`/`pnpm`/`dsh` resolve through
+  `.cmd`/`.bat` shims and `spawnSync` without a shell fails ENOENT. POSIX
+  keeps exec-direct behavior; explicit `opts.shell` still wins.
+- `resolveDshRoot()` now also discovers pinned clones checked out as
+  `dsh-upstream-pinned` (both PROJECT_ROOT- and SUPREME_ROOT-relative).
+
+**Also fixed — v3 gate upstream resolution (`real/v3-config-verify.mjs`):**
+v3 was the one verifier missing the v1.3.2 5-candidate resolver convention
+(PROJECT_ROOT- AND SUPREME_ROOT-relative candidates). In the canonical sibling
+layout (`setup` clones `../deepseek-harness`) it probed a nonexistent
+`node_modules/.upstream` path and died at prereq. Aligned with
+`real/v12-config-verify.mjs`; the blind `candidates[2]` fallback now points at
+the primary candidate. The full verification ladder is layout-complete.
+
+**Evidence (all re-run on this release):** `bun run verify` → **ALL GATES PASS
+15/15** (BUNDLE_E2E_COMPLETE, COMPOSITIONS_E2E_COMPLETE, V3_CONFIG_REVIEW_
+EVIDENCE, V12_E2E_COMPLETE, V13 ×3, V131 ×7, suite VERDICT); `bun run suite`
+→ **VERDICT COMPLETE** (101/101 checks, 5/5 real boots 60–1254 ms,
+sentinelLeaks=0); `node real/supreme.mjs doctor` → READY; `bun run lint` →
+clean; dist/ rebuilt (11 plugins) with the new `pathIsAllowed`.
+
+**Upgrade notes:** pull and run `node real/supreme.mjs setup` (idempotent) —
+it rebuilds `dist/` with the Windows-correct verifier. Windows hosts: re-run
+`bun run verify` — gate B4 now reports PASS on win32, and file validators
+accept real Windows paths inside `allowedRoots`.
+
 ## 1.3.2 — Plug-and-play: Windows dataDir fix + one-command setup/doctor/verify
 
 Goal: **fully functional out of the box** — `plugin add` alone must be enough;

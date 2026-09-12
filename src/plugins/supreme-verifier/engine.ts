@@ -16,8 +16,9 @@
  *    local filesystem write access can still swap paths/inodes between the
  *    realpath/stat window and the open, or rewrite content in place under a
  *    stable inode. This is hardening, not a race-proof guarantee. Windows
- *    junction/symlink semantics are delegated to node fs realpath but were
- *    NOT tested in this environment (Linux only).
+ *    junction/symlink semantics are delegated to node fs realpath; the
+ *    lexical pre-filter (pathIsAllowed) is separator-correct for `\` paths
+ *    since v1.3.3, and the hardening gate accepts linux/win32/darwin.
  *  - json-schema validation implements a bounded deterministic subset; any
  *    keyword or dialect feature outside the subset yields UNAVAILABLE (with
  *    the keyword named) — never a silent downgrade to PASS. Invalid schemas
@@ -142,14 +143,31 @@ export interface VerifierRuntime {
   hashBytes?(bytes: Uint8Array): Promise<string | null>;
 }
 /** Lexical confinement helper (kept for deterministic unit checks): resolved
- *  path must live inside one of the allowed roots by string prefix. This is
- *  the CHEAP pre-filter; the real confinement is resolveRealConfinement. */
+ *  path must live inside one of the allowed roots. v1.3.3 (Windows
+ *  cross-platform hardening): containment prefers path.relative() when the
+ *  host supplies it — correct on both POSIX (`/`) and Windows (`\`) — and the
+ *  resolve-only fallback accepts EITHER separator so Windows paths are not
+ *  rejected before real-path hardening runs. This is still the CHEAP
+ *  pre-filter; the real confinement is resolveRealConfinement. */
 export function pathIsAllowed(path: string, allowedRoots: string[], pathMod: VerifierPathMod): boolean {
   if (allowedRoots.length === 0) return false;
   const resolved = pathMod.resolve(path);
   return allowedRoots.some((root) => {
     const r = pathMod.resolve(root);
-    return resolved === r || resolved.startsWith(r.endsWith('/') ? r : r + '/');
+    if (resolved === r) return true;
+
+    // Prefer path.relative() when supplied by the host. This keeps the cheap
+    // lexical pre-filter correct on both POSIX (`/`) and Windows (`\`) paths,
+    // and avoids sibling-prefix bypasses such as `/root` vs `/root-evil`.
+    if (typeof pathMod.relative === 'function' && typeof pathMod.isAbsolute === 'function') {
+      const isAbs = pathMod.isAbsolute.bind(pathMod) as (p: string) => boolean;
+      return !relativeEscapesRoot(pathMod.relative(r, resolved), isAbs);
+    }
+
+    // Fallback for older test shims that only provide resolve(). Accept either
+    // separator so Windows paths are not rejected before real-path hardening can
+    // run. This is still only a pre-filter; real containment is checked later.
+    return resolved.startsWith(r.endsWith('/') || r.endsWith('\\') ? r : `${r}/`) || resolved.startsWith(`${r}\\`);
   });
 }
 /** True when a path.relative() result means "outside the root". Rejects

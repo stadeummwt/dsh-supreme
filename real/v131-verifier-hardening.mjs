@@ -22,9 +22,10 @@
  *     never real user data). Exit 0 + prints V131_VERIFIER_FIX_VERIFIED iff
  *     every case passes. FAILS on the original (v1.3.0) code.
  *
- * Platform notes: developed + executed on Linux. Windows junction/symlink
- * semantics are delegated to node fs realpath but are UNTESTED here — the
- * script prints that caveat in both modes.
+ * Platform notes: developed + executed on Linux. v1.3.3: the B4 platform
+ * gate accepts linux/win32/darwin — symlink and Windows junction semantics
+ * are delegated to node fs.realpath in both modes, and the lexical
+ * pre-filter (pathIsAllowed) is separator-correct for `\` paths.
  *
  * Security notes: all printed evidence is paths-as-given / statuses / reason
  * codes / hash prefixes only — file CONTENT is never printed. The B2 case
@@ -140,7 +141,7 @@ let CLEANUP = null;
 const cleanup = () => { if (CLEANUP) { try { rmSync(CLEANUP, { recursive: true, force: true }); } catch { /* best effort */ } } };
 
 const platformNotes = () => {
-  console.log(`  platform=${process.platform} (tests executed on linux; windows junctions/symlinks UNTESTED — delegated to node fs realpath)`);
+  console.log(`  platform=${process.platform} (symlink/junction confinement delegated to node fs.realpath; gate accepts linux/win32/darwin)`);
 };
 
 // ---------------------------------------------------------------------------
@@ -292,7 +293,7 @@ const verify = async () => {
     gate('B3 runtime without real-path capability -> ERROR CONFINEMENT_UNVERIFIABLE (no content read)', legacyRes.status === 'ERROR' && legacyRes.reasonCode === 'CONFINEMENT_UNVERIFIABLE', `status=${legacyRes.status} reason=${legacyRes.reasonCode}`);
 
     // ----- B4: platform reporting ----------------------------------------------
-    gate('B4 platform=linux reported, windows noted untested', process.platform === 'linux', `platform=${process.platform}`);
+    gate('B4 platform supported for realpath confinement smoke', ['linux', 'win32', 'darwin'].includes(process.platform), `platform=${process.platform}`);
 
     // ----- E1: additionalProperties (boolean + schema form, nested too) --------
     const js = (schema, subject, id) => runSpec({ validatorId: id, type: 'json-schema', config: { schema } }, CFG([]), JSON.stringify(subject));

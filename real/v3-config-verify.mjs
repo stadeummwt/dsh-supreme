@@ -32,9 +32,17 @@ function resolveDshRoot() {
     join(PROJECT_ROOT, '..', 'deepseek-harness'),
     join(PROJECT_ROOT, 'upstream', 'deepseek-harness'),
     join(PROJECT_ROOT, 'node_modules', '.upstream', 'deepseek-harness'),
+    // SUPREME_ROOT-relative candidates: in a published-layout CI checkout
+    // (<ws>/dsh-supreme/dsh-supreme) the repo dir itself is named dsh-supreme,
+    // so PROJECT_ROOT resolves one level up and the candidates above miss the
+    // sibling upstream. These two paths are correct in BOTH layouts:
+    // monorepo -> <project>/node_modules/.upstream/deepseek-harness,
+    // published CI -> <ws>/dsh-supreme/deepseek-harness (workflow clone dir).
+    join(SUPREME_ROOT, '..', 'deepseek-harness'),
+    join(SUPREME_ROOT, '..', 'node_modules', '.upstream', 'deepseek-harness'),
   ];
   for (const c of candidates) if (existsSync(join(c, 'package.json'))) return c;
-  return candidates[2];
+  return candidates[0];
 }
 const DSH_ROOT = resolveDshRoot();
 const PROFILE_NAME = 'v3-review';

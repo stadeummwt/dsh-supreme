@@ -60,12 +60,16 @@ function arg(flag) {
 const hasFlag = (f) => process.argv.includes(f);
 
 function run(cmd, args, opts = {}) {
+  // Windows: bun/pnpm/dsh resolve through .cmd/.bat shims — spawnSync needs a
+  // shell to find them (ENOENT otherwise). POSIX keeps exec-direct (faster,
+  // no quoting surprises). Explicit opts.shell still wins.
+  const isWin = process.platform === 'win32';
   const r = spawnSync(cmd, args, {
     encoding: 'utf8',
     timeout: opts.timeout ?? 120_000,
     cwd: opts.cwd ?? SUPREME_ROOT,
     env: opts.env ?? process.env,
-    shell: opts.shell ?? false,
+    shell: opts.shell ?? isWin,
   });
   return {
     ok: r.status === 0,
@@ -86,9 +90,12 @@ export function resolveDshRoot() {
   if (process.env.DSH_UPSTREAM_ROOT) return process.env.DSH_UPSTREAM_ROOT;
   const candidates = [
     join(PROJECT_ROOT, '..', 'deepseek-harness'),
+    // Pinned clones are often checked out under an explicit pin name.
+    join(PROJECT_ROOT, '..', 'dsh-upstream-pinned'),
     join(PROJECT_ROOT, 'upstream', 'deepseek-harness'),
     join(PROJECT_ROOT, 'node_modules', '.upstream', 'deepseek-harness'),
     join(SUPREME_ROOT, '..', 'deepseek-harness'),
+    join(SUPREME_ROOT, '..', 'dsh-upstream-pinned'),
     join(SUPREME_ROOT, '..', 'node_modules', '.upstream', 'deepseek-harness'),
   ];
   for (const cand of candidates) {

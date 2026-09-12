@@ -33,7 +33,13 @@ function pathIsAllowed(path, allowedRoots, pathMod) {
   const resolved = pathMod.resolve(path);
   return allowedRoots.some((root) => {
     const r = pathMod.resolve(root);
-    return resolved === r || resolved.startsWith(r.endsWith("/") ? r : r + "/");
+    if (resolved === r)
+      return true;
+    if (typeof pathMod.relative === "function" && typeof pathMod.isAbsolute === "function") {
+      const isAbs = pathMod.isAbsolute.bind(pathMod);
+      return !relativeEscapesRoot(pathMod.relative(r, resolved), isAbs);
+    }
+    return resolved.startsWith(r.endsWith("/") || r.endsWith("\\") ? r : `${r}/`) || resolved.startsWith(`${r}\\`);
   });
 }
 function relativeEscapesRoot(rel, isAbsolute) {
